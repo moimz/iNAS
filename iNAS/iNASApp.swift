@@ -19,6 +19,11 @@ struct INASApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model = AppModel()
 
+    init() {
+        // 자동 업데이트: 켜 두었으면 하루 한 번 새 버전을 확인한다
+        _ = Updater.shared
+    }
+
     var body: some Scene {
         Window("iNAS", id: "main") {
             ContentView()
@@ -29,7 +34,15 @@ struct INASApp: App {
         }
         .windowResizability(.contentMinSize)
         .commands {
+            CommandGroup(after: .appInfo) {
+                UpdateMenuButton()
+            }
             CommandGroup(replacing: .newItem) {}
+        }
+
+        // iNAS 설정 (⌘,): 업데이트
+        Settings {
+            SettingsView()
         }
     }
 }
