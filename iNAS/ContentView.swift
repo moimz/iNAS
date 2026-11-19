@@ -1,5 +1,16 @@
 import SwiftUI
 
+/// 사이드바 서버 행의 아이콘. 선택돼 강조색 배경이 칠해지면 그 배경에 묻히지 않게 흰색으로 바꾼다.
+private struct ServerRowIcon: View {
+    let enabled: Bool
+    @Environment(\.backgroundProminence) private var prominence
+
+    var body: some View {
+        Image(systemName: enabled ? "server.rack" : "pause.circle")
+            .foregroundStyle(prominence == .increased ? Color.white : (enabled ? Color.accentColor : Color.secondary))
+    }
+}
+
 struct ContentView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var store: ServerStore
@@ -42,8 +53,7 @@ struct ContentView: View {
             Section("서버") {
                 ForEach(store.servers) { server in
                     HStack {
-                        Image(systemName: server.enabled ? "server.rack" : "pause.circle")
-                            .foregroundStyle(server.enabled ? Color.accentColor : .secondary)
+                        ServerRowIcon(enabled: server.enabled)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(server.displayName)
                             Text(server.shares.isEmpty ? "선택한 공유 없음" : "공유 \(server.shares.count)개")
