@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import ServiceManagement
 
 /// 앱 안의 LaunchAgent(`--mount-only`로 실행)를 SMAppService로 등록·해제한다.
@@ -30,6 +31,15 @@ final class LoginItemController: ObservableObject {
         lastError = nil
         do {
             if on {
+                // 개발 빌드(Apple Development)로 등록하면 에이전트의 실행 조건(LWCR)이 개발 빌드 기준으로 굳어,
+                // Developer ID 로 설치한 앱의 에이전트가 Launch Constraint Violation 으로 죽는다(되돌리려면 sfltool resetbtm).
+                // 그래서 Developer ID 로 서명된 앱에서만 등록한다. 해제는 막지 않는다.
+                guard Self.isDeveloperIDSigned() else {
+                    lastError = "개발 빌드에서는 로그인 항목을 등록하지 않습니다. Developer ID 로 설치한 앱에서 켜 주세요."
+                    Log.app.error("개발 빌드라 로그인 항목 등록을 건너뜀")
+                    refresh()
+                    return
+                }
                 try service.register()
             } else {
                 try service.unregister()
@@ -46,5 +56,16 @@ final class LoginItemController: ObservableObject {
 
     func openSystemSettings() {
         SMAppService.openSystemSettingsLoginItems()
+    }
+
+    /// 지금 실행 중인 앱이 우리 팀의 Developer ID 로 서명됐는지
+    nonisolated static func isDeveloperIDSigned() -> Bool {
+        let text = "anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] and certificate leaf[field.1.2.840.113635.100.6.1.13] and certificate leaf[subject.OU] = \"XSDBV8D2XL\""
+        var code: SecCode?
+        var requirement: SecRequirement?
+        guard SecCodeCopySelf([], &code) == errSecSuccess, let code,
+              SecRequirementCreateWithString(text as CFString, [], &requirement) == errSecSuccess, let requirement
+        else { return false }
+        return SecCodeCheckValidity(code, [], requirement) == errSecSuccess
     }
 }
