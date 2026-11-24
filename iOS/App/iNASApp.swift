@@ -1,5 +1,6 @@
 import AMSMB2
 import FileProvider
+import LocalAuthentication
 import SwiftUI
 
 /// iNAS 아이폰·아이패드 앱: NAS 서버를 등록하면 서버마다 파일 앱 "위치"가 하나씩 생긴다.
@@ -18,6 +19,7 @@ struct ServerListView: View {
     @State private var editing: NASServer?
     @State private var lockMinutes = Shared.lockMinutes
     @State private var message: String?
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         NavigationStack {
@@ -56,6 +58,9 @@ struct ServerListView: View {
                 }
             }
             .navigationTitle("iNAS")
+            .safeAreaInset(edge: .bottom) {
+                Text(Self.versionText).font(.caption2).foregroundStyle(.tertiary).padding(.bottom, 4)
+            }
             .toolbar {
                 Button { editing = NASServer() } label: { Image(systemName: "plus") }
             }
@@ -65,8 +70,32 @@ struct ServerListView: View {
                 }
             }
             .task { await syncDomains() }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { unlockIfRequested() }
+            }
             .alert(message ?? "", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
                 Button("확인", role: .cancel) {}
+            }
+        }
+    }
+
+    static var versionText: String {
+        let info = Bundle.main.infoDictionary
+        return "버전 \(info?["CFBundleShortVersionString"] as? String ?? "?") (\(info?["CFBundleVersion"] as? String ?? "?"))"
+    }
+
+    /// 파일 앱이 잠금 폴더에서 "인증 필요 › iNAS 열기" 로 앱을 열었으면 바로 Face ID 를 묻고,
+    /// 통과하면 열어 두고 파일 앱에 "해결됨" 을 알려 폴더를 다시 읽게 한다
+    private func unlockIfRequested() {
+        let waiting = servers.filter { LockState.takeRecentRequest($0.id) }
+        guard !waiting.isEmpty else { return }
+        let context = LAContext()
+        context.touchIDAuthenticationAllowableReuseDuration = 0
+        context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "잠금 폴더를 엽니다") { ok, _ in
+            guard ok else { return }
+            for server in waiting {
+                LockState.unlock(server.id)
+                NSFileProviderManager(for: server.domain)?.signalErrorResolved(NSFileProviderError(.notAuthenticated)) { _ in }
             }
         }
     }

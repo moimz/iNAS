@@ -10,8 +10,8 @@ enum Shared {
         get { defaults.object(forKey: "lockMinutes") == nil ? 5 : defaults.integer(forKey: "lockMinutes") }
         set { defaults.set(newValue, forKey: "lockMinutes") }
     }
-    /// 0분("없음")이면 Face ID 직후 폴더 목록을 읽어 갈 짧은 틈만 연다 → 나갔다 다시 들어가면 또 묻는다
-    static var lockInterval: TimeInterval { lockMinutes == 0 ? 20 : TimeInterval(lockMinutes * 60) }
+    /// 0분("없음")이면 Face ID 직후 폴더 목록을 읽어 갈 짧은 틈(30초)만 연다 → 나갔다 다시 들어가면 또 묻는다
+    static var lockInterval: TimeInterval { lockMinutes == 0 ? 30 : TimeInterval(lockMinutes * 60) }
 
     static var defaults: UserDefaults { UserDefaults(suiteName: appGroup) ?? .standard }
 }
@@ -71,6 +71,20 @@ enum LockState {
 
     static func lock(_ id: String) {
         Shared.defaults.removeObject(forKey: key(id))
+    }
+
+    /// 파일 앱이 잠금 폴더를 열려다 막힌 시각. 파일 앱의 "iNAS 열기" 로 앱이 열리면 앱이 이걸 보고 바로 Face ID 를 묻는다.
+    private static func requestKey(_ id: String) -> String { "authRequested.\(id)" }
+
+    static func requestAuth(_ id: String) {
+        Shared.defaults.set(Date().timeIntervalSince1970, forKey: requestKey(id))
+    }
+
+    /// 최근(기본 2분 안)에 막힌 적이 있으면 true 를 주고 기록을 지운다
+    static func takeRecentRequest(_ id: String, within seconds: TimeInterval = 120) -> Bool {
+        let at = Shared.defaults.double(forKey: requestKey(id))
+        Shared.defaults.removeObject(forKey: requestKey(id))
+        return at > 0 && Date().timeIntervalSince1970 - at < seconds
     }
 }
 
