@@ -7,10 +7,11 @@ enum Shared {
     static let appGroup = "group.com.moimz.iNAS"
     /// 잠금 폴더를 마지막으로 쓴 뒤 이만큼 지나면 다시 잠근다 (앱 설정, 기본 5분)
     static var lockMinutes: Int {
-        get { let v = defaults.integer(forKey: "lockMinutes"); return v > 0 ? v : 5 }
+        get { defaults.object(forKey: "lockMinutes") == nil ? 5 : defaults.integer(forKey: "lockMinutes") }
         set { defaults.set(newValue, forKey: "lockMinutes") }
     }
-    static var lockInterval: TimeInterval { TimeInterval(lockMinutes * 60) }
+    /// 0분("없음")이면 Face ID 직후 폴더 목록을 읽어 갈 짧은 틈만 연다 → 나갔다 다시 들어가면 또 묻는다
+    static var lockInterval: TimeInterval { lockMinutes == 0 ? 20 : TimeInterval(lockMinutes * 60) }
 
     static var defaults: UserDefaults { UserDefaults(suiteName: appGroup) ?? .standard }
 }

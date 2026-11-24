@@ -43,7 +43,9 @@ final class ActionViewController: FPUIActionExtensionViewController {
             messageLabel.text = "NAS 에 로그인하지 못했습니다.\niNAS 앱에서 아이디와 비밀번호를 확인하세요."
             unlockButton.isHidden = true
         } else {
-            messageLabel.text = "잠금 폴더입니다.\nFace ID 로 확인하면 \(Shared.lockMinutes)분 동안 열립니다."
+            messageLabel.text = Shared.lockMinutes == 0
+                ? "잠금 폴더입니다.\nFace ID 로 확인하면 열립니다."
+                : "잠금 폴더입니다.\nFace ID 로 확인하면 \(Shared.lockMinutes)분 동안 열립니다."
             unlockButton.isHidden = false
             authenticate()
         }
@@ -56,7 +58,7 @@ final class ActionViewController: FPUIActionExtensionViewController {
     @objc private func authenticate() {
         let context = LAContext()
         // 아이폰을 생체 인증으로 방금 풀었으면 다시 묻지 않는다 (최대 5분, 동작은 기기에서 확인 필요)
-        context.touchIDAuthenticationAllowableReuseDuration = LATouchIDAuthenticationMaximumAllowableReuseDuration
+        context.touchIDAuthenticationAllowableReuseDuration = Shared.lockMinutes == 0 ? 0 : LATouchIDAuthenticationMaximumAllowableReuseDuration
         context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "잠금 폴더 열기") { success, error in
             DispatchQueue.main.async {
                 if success {

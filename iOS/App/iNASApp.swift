@@ -43,17 +43,16 @@ struct ServerListView: View {
 
                 Section {
                     Picker("잠금 유지 시간", selection: $lockMinutes) {
+                        Text("없음 (매번 확인)").tag(0)
                         ForEach([1, 5, 15, 30, 60], id: \.self) { Text("\($0)분").tag($0) }
                     }
                     .onChange(of: lockMinutes) { _, value in Shared.lockMinutes = value }
                 } header: {
                     Text("잠금 폴더")
                 } footer: {
-                    Text("잠금 폴더는 Face ID 로 열고, 마지막으로 쓴 뒤 이 시간이 지나면 다시 잠깁니다.")
-                }
-
-                if let message {
-                    Section { Text(message).font(.footnote).foregroundStyle(.secondary) }
+                    Text(lockMinutes == 0
+                         ? "잠금 폴더는 들어갈 때마다 Face ID 로 확인합니다."
+                         : "잠금 폴더는 Face ID 로 열고, 마지막으로 쓴 뒤 이 시간이 지나면 다시 잠깁니다.")
                 }
             }
             .navigationTitle("iNAS")
@@ -66,6 +65,9 @@ struct ServerListView: View {
                 }
             }
             .task { await syncDomains() }
+            .alert(message ?? "", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
+                Button("확인", role: .cancel) {}
+            }
         }
     }
 
@@ -79,7 +81,7 @@ struct ServerListView: View {
         NSFileProviderManager.remove(domain) { _ in
             NSFileProviderManager.add(domain) { error in
                 Task { @MainActor in
-                    message = error.map { "위치를 등록하지 못했습니다: \($0.localizedDescription)" } ?? "\"\(server.name)\" 을(를) 파일 앱에 등록했습니다."
+                    if let error { message = "위치를 등록하지 못했습니다: \(error.localizedDescription)" }
                 }
             }
         }
@@ -91,7 +93,6 @@ struct ServerListView: View {
         PasswordStore.delete(for: server.id)
         LockState.lock(server.id)
         NSFileProviderManager.remove(server.domain) { _ in }
-        message = "\"\(server.name)\" 을(를) 지웠습니다."
     }
 
     /// 이 서버에서 받아 둔 파일을 모두 비운다 (목록은 그대로, 다시 열면 다시 받음)
@@ -99,7 +100,7 @@ struct ServerListView: View {
         guard let manager = NSFileProviderManager(for: server.domain) else { return }
         manager.evictItem(identifier: .rootContainer) { error in
             Task { @MainActor in
-                message = error.map { "받은 파일을 비우지 못했습니다: \($0.localizedDescription)" } ?? "\"\(server.name)\" 에서 받아 둔 파일을 비웠습니다."
+                if let error { message = "받은 파일을 비우지 못했습니다: \(error.localizedDescription)" }
             }
         }
     }
@@ -122,19 +123,21 @@ private struct ServerRow: View {
     let server: NASServer
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Label(server.name, systemImage: "server.rack").font(.headline)
-            Text(server.address).font(.caption).foregroundStyle(.secondary)
-            if !server.shares.isEmpty {
-                Text(server.shares.map { server.isLocked($0) ? "🔒 \($0)" : $0 }.joined(separator: " · "))
-                    .font(.caption)
+        HStack(spacing: 12) {
+            Image(systemName: "externaldrive.connected.to.line.below")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 40, height: 40)
+                .background(Color.accentColor.gradient, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(server.name).font(.headline).lineLimit(1)
+                Text(server.loginAddress).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
             }
-            let folders = server.locked.filter { !server.shares.contains($0) }
-            if !folders.isEmpty {
-                Text("잠금: " + folders.joined(separator: ", ")).font(.caption).foregroundStyle(.orange)
-            }
+            Spacer(minLength: 8)
+            // 파일 앱에 연결한 공유 수
+            Text("\(server.shares.count)").font(.headline).foregroundStyle(.secondary).monospacedDigit()
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
     }
 }
 
@@ -389,5 +392,10 @@ extension NASServer {
 
     var address: String {
         host + (port.map { ":\($0)" } ?? "")
+    }
+
+    /// 목록에 보일 "아이디@주소:포트"
+    var loginAddress: String {
+        username.isEmpty ? address : "\(username)@\(address)"
     }
 }
