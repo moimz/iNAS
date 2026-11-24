@@ -77,12 +77,16 @@ struct ServerListView: View {
         NSFileProviderManager.remove(domain(server)) { _ in }
     }
 
-    /// 1차 시험에서 만든 "iNAS 시험" 가짜 위치 등 서버 목록에 없는 위치를 지운다
+    /// 서버 목록과 파일 앱 위치를 맞춘다: 목록에 없는 위치(1차 시험의 가짜 위치 등)는 지우고, 빠진 서버는 등록한다
     private func cleanUpOldDomains() async {
         let ids = Set(servers.map(\.id))
-        guard let domains = try? await NSFileProviderManager.domains() else { return }
+        let domains = (try? await NSFileProviderManager.domains()) ?? []
         for domain in domains where !ids.contains(domain.identifier.rawValue) {
             try? await NSFileProviderManager.remove(domain)
+        }
+        let registered = Set(domains.map(\.identifier.rawValue))
+        for server in servers where !registered.contains(server.id) {
+            try? await NSFileProviderManager.add(domain(server))
         }
     }
 }
