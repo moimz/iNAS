@@ -7,7 +7,8 @@ let log = Logger(subsystem: "com.moimz.iNAS", category: "FileProvider")
 
 /// NAS 서버 하나 = 파일 앱 위치 하나 (도메인 식별자 = 서버 id).
 /// 맨 위에는 iNAS 에서 고른 공유만 폴더로 보이고, 그 안은 SMB 폴더를 그대로 보여 준다.
-/// 항목 식별자: "공유/경로/이름" (맨 위 = rootContainer, 공유 = "공유")
+/// 항목 식별자: "공유/경로/이름" (맨 위 = rootContainer, 공유 = "공유").
+/// 잠금 폴더는 이름 뒤에 다시 잠근 번호를 붙인다: "Book|3", 그 안은 "Book|3/a.pdf" (LockMarks)
 final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     let domain: NSFileProviderDomain
     let snapshots: FolderSnapshots
@@ -18,9 +19,83 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         smb = SMBConnections(serverID: domain.identifier.rawValue)
         snapshots = FolderSnapshots(domainID: domain.identifier.rawValue)
         super.init()
+        Task { [weak self] in
+            await self?.relockIfNeeded()
+            await self?.announceTop()
+        }
+        scheduleRelock()
     }
 
-    func invalidate() {}
+    private let relockLock = NSLock()
+    private var relockTask: Task<Void, Never>?
+
+    /// 열림 시간이 끝나는 때에 맞춰 잠금 폴더를 다시 잠근다. 파일 앱을 나가 있는 동안 시간이 다 돼도
+    /// 돌아왔을 때 예전 목록 대신 "인증 필요" 가 뜨도록. (확장이 그 전에 끝나면 다음에 뜰 때 바로 잠근다)
+    private func scheduleRelock() {
+        relockLock.lock(); defer { relockLock.unlock() }
+        guard relockTask == nil, let server, !server.locked.isEmpty, LockState.isUnlocked(server.id) else { return }
+        let id = server.id
+        relockTask = Task { [weak self] in
+            while !Task.isCancelled {
+                let wait = LockState.unlockedUntil(id) - Date().timeIntervalSince1970
+                if wait <= 0 { break }
+                try? await Task.sleep(for: .seconds(wait + 1))
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.relockLock.withLock { self.relockTask = nil }
+            await self.relockIfNeeded()
+        }
+    }
+
+    private var marks: LockMarks { Self.marks(serverID: domain.identifier.rawValue) }
+
+    static func marks(serverID: String) -> LockMarks {
+        guard let server = ServerStore.server(id: serverID) else { return .none }
+        return LockMarks(locked: server.locked, epoch: LockState.epoch(server.id))
+    }
+
+    /// 잠금 폴더를 지금 번호의 식별자로 하나씩 만든다
+    private func lockedFolderItems(_ marks: LockMarks) -> [NASItem] {
+        marks.locked.map { locked in
+            let id = marks.mark(locked)
+            return NASItem(id: NSFileProviderItemIdentifier(id), parent: ItemPath.parent(of: id),
+                           name: (locked as NSString).lastPathComponent, isFolder: true, size: nil, modified: nil,
+                           isShare: !locked.contains("/"))
+        }
+    }
+
+    /// 확장이 뜰 때마다 고른 공유와 잠금 폴더를 working set 으로 한 번 다시 알린다 (이미 있으면 그대로).
+    /// 예전 빌드가 남긴 표시 없는 잠금 폴더("Book")는 지운다.
+    private func announceTop() async {
+        guard let server, !server.shares.isEmpty else { return }
+        let marks = marks
+        var items = server.shares.filter { !server.locked.contains($0) }
+            .map { NASItem.folder(id: $0, parent: .rootContainer, name: $0) }
+        items += lockedFolderItems(marks)
+        await snapshots.apply(deletes: server.locked, updates: items, clearing: [])
+        try? await NSFileProviderManager(for: domain)?.signalEnumerator(for: .workingSet)
+    }
+
+    /// 잠금 시간이 지났으면(한 번 잠근 뒤 다시 열리기 전까지 한 번만) 번호를 올려 잠금 폴더를 새 식별자로 바꾼다.
+    /// 예전 식별자 폴더를 지우면 파일 앱이 기억해 둔 안쪽 목록·받은 파일도 같이 빠지고,
+    /// 새 식별자 폴더는 처음 보는 폴더라 열 때 목록을 새로 물어 그때 "인증 필요" 가 뜬다.
+    /// (같은 식별자로 지웠다 넣거나 evict 하는 방법은 파일 앱이 예전 목록을 붙여 두거나 "사용 중" 으로 거절해 안 됐다)
+    func relockIfNeeded() async {
+        guard let server, !server.locked.isEmpty, !LockState.isUnlocked(server.id) else { return }
+        guard await snapshots.beginRelock() else { return }
+        let old = LockState.epoch(server.id)
+        let new = LockState.bumpEpoch(server.id)
+        let oldMarks = LockMarks(locked: server.locked, epoch: old)
+        let deletes = server.locked.flatMap { [$0, oldMarks.mark($0)] }
+        await snapshots.apply(deletes: deletes, updates: lockedFolderItems(LockMarks(locked: server.locked, epoch: new)),
+                              clearing: server.locked)
+        log.notice("잠금 폴더 다시 잠금 \(server.locked, privacy: .public) 번호 \(old)→\(new)")
+        try? await NSFileProviderManager(for: domain)?.signalEnumerator(for: .workingSet)
+    }
+
+    func invalidate() {
+        relockLock.withLock { relockTask?.cancel() }
+    }
 
     private var server: NASServer? { ServerStore.server(id: domain.identifier.rawValue) }
 
@@ -30,9 +105,13 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             completionHandler(NASItem.root(name: domain.displayName), nil)
             return Progress()
         }
+        if marks.isStale(identifier.rawValue) {
+            completionHandler(nil, NSFileProviderError(.noSuchItem))
+            return Progress()
+        }
         let (share, path) = ItemPath.split(identifier.rawValue)
         if path == "/" {
-            completionHandler(NASItem.folder(id: share, parent: .rootContainer, name: share), nil)
+            completionHandler(NASItem.folder(id: identifier.rawValue, parent: .rootContainer, name: share), nil)
             return Progress()
         }
         Task {
@@ -86,7 +165,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             completionHandler(nil, [], false, NSFileProviderError(.cannotSynchronize))
             return progress
         }
-        let newID = ItemPath.child(of: parent.rawValue, name: ItemPath.nfc(itemTemplate.filename))
+        let newID = ItemPath.child(of: parent.rawValue, name: ItemPath.nfc(itemTemplate.filename), marks: marks)
         if let error = lockError(for: newID) {
             completionHandler(nil, [], false, error)
             return progress
@@ -120,6 +199,13 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                     completionHandler: @escaping (NSFileProviderItem?, NSFileProviderItemFields, Bool, Error?) -> Void) -> Progress {
         let progress = Progress(totalUnitCount: 1)
         let oldID = item.itemIdentifier.rawValue
+        // 파일 앱이 폴더를 열 때 고치는 마지막 사용 시각·태그 같은 정보는 NAS 에 둘 곳이 없으니 그냥 받는다.
+        // 잠금으로 거절하면 "올리기 대기" 로 남아 폴더가 계속 사용 중이 되고 비우기(evict)도 막힌다.
+        if changedFields.isDisjoint(with: [.filename, .parentItemIdentifier, .contents]) {
+            log.debug("정보만 바뀜 \(oldID, privacy: .public) \(changedFields.rawValue)")
+            completionHandler(item, [], false, nil)
+            return progress
+        }
         if let error = lockError(for: oldID) {
             completionHandler(nil, [], false, error)
             return progress
@@ -132,7 +218,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                 var id = oldID
                 if changedFields.contains(.filename) || changedFields.contains(.parentItemIdentifier) {
                     // 같은 공유 안에서만 옮긴다
-                    let newID = ItemPath.child(of: item.parentItemIdentifier.rawValue, name: ItemPath.nfc(item.filename))
+                    let newID = ItemPath.child(of: item.parentItemIdentifier.rawValue, name: ItemPath.nfc(item.filename), marks: marks)
                     let (newShare, newPath) = ItemPath.split(newID)
                     guard newShare == share else { throw NSFileProviderError(.cannotSynchronize) }
                     try await manager.moveItem(atPath: oldPath, toPath: newPath)
@@ -177,6 +263,9 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     }
 
     func enumerator(for containerItemIdentifier: NSFileProviderItemIdentifier, request: NSFileProviderRequest) throws -> NSFileProviderEnumerator {
+        if marks.isStale(containerItemIdentifier.rawValue) {
+            throw NSFileProviderError(.noSuchItem)
+        }
         if containerItemIdentifier != .rootContainer, containerItemIdentifier != .workingSet,
            let error = lockError(for: containerItemIdentifier.rawValue) {
             throw error
@@ -184,9 +273,10 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         let serverID = domain.identifier.rawValue
         return NASEnumerator(container: containerItemIdentifier, shares: server?.shares ?? [], smb: smb,
                              snapshots: snapshots, manager: NSFileProviderManager(for: domain),
-                             isLockedNow: { path in
+                             marks: { Self.marks(serverID: serverID) },
+                             isLockedNow: { id in
                                  guard let server = ServerStore.server(id: serverID) else { return false }
-                                 return server.isLocked(path) && !LockState.isUnlocked(server.id)
+                                 return server.isLocked(ItemPath.clean(id)) && !LockState.isUnlocked(server.id)
                              },
                              relock: { [weak self] in self?.hideLockedContents() })
     }
@@ -199,11 +289,15 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     }
 
     /// 잠금 폴더 안인데 열려 있지 않으면 "인증 필요". 열려 있으면 시간을 늘린다.
-    private func lockError(for path: String) -> Error? {
+    private func lockError(for id: String, caller: String = #function) -> Error? {
+        let path = ItemPath.clean(id)
         guard let server, server.isLocked(path) else { return nil }
-        log.debug("잠금 확인 \(path, privacy: .public) 열림=\(LockState.isUnlocked(server.id))")
+        log.debug("잠금 확인 \(caller, privacy: .public) \(path, privacy: .public) 열림=\(LockState.isUnlocked(server.id))")
         if LockState.isUnlocked(server.id) {
             LockState.touch(server.id)
+            scheduleRelock()
+            // 열렸으니 다음에 시간이 다 되면 다시 잠글 수 있게
+            Task { [snapshots] in await snapshots.unlocked() }
             return nil
         }
         LockState.requestAuth(server.id)
@@ -212,19 +306,8 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                        userInfo: [AuthReason.key: AuthReason.lockedFolder])
     }
 
-    /// 다시 잠기면 파일 앱이 기억해 둔 잠금 폴더 안 목록을 지운다 (안 그러면 인증 없이 예전 목록을 그대로 보여 줌)
     func hideLockedContents() {
-        guard let server else { return }
-        let manager = NSFileProviderManager(for: domain)
-        Task { [snapshots] in
-            if await snapshots.hide(server.locked) {
-                log.notice("잠금 폴더 목록 감춤 \(server.locked, privacy: .public)")
-                try? await manager?.signalEnumerator(for: .workingSet)
-                // 지운 폴더를 빈 껍데기로 다시 넣는 차례
-                try? await Task.sleep(for: .seconds(1))
-                try? await manager?.signalEnumerator(for: .workingSet)
-            }
-        }
+        Task { await relockIfNeeded() }
     }
 }
 
@@ -233,18 +316,22 @@ final class NASEnumerator: NSObject, NSFileProviderEnumerator {
     let shares: [String]
     let smb: SMBConnections
     let snapshots: FolderSnapshots
+    /// 파일 앱이 열거자를 오래 붙들고 있으니 잠금 번호는 쓸 때마다 새로 읽는다
+    let marks: @Sendable () -> LockMarks
 
     private var watcher: Task<Void, Never>?
 
     init(container: NSFileProviderItemIdentifier, shares: [String], smb: SMBConnections, snapshots: FolderSnapshots,
-         manager: NSFileProviderManager?, isLockedNow: @escaping @Sendable (String) -> Bool, relock: @escaping @Sendable () -> Void) {
+         manager: NSFileProviderManager?, marks: @escaping @Sendable () -> LockMarks,
+         isLockedNow: @escaping @Sendable (String) -> Bool, relock: @escaping @Sendable () -> Void) {
         self.container = container
         self.shares = shares
         self.smb = smb
         self.snapshots = snapshots
+        self.marks = marks
         super.init()
         if container != .rootContainer, container != .workingSet {
-            watcher = Self.watch(container.rawValue, smb: smb, snapshots: snapshots, manager: manager,
+            watcher = Self.watch(container.rawValue, smb: smb, snapshots: snapshots, manager: manager, marks: marks,
                                  isLockedNow: isLockedNow, relock: relock)
         }
     }
@@ -252,7 +339,8 @@ final class NASEnumerator: NSObject, NSFileProviderEnumerator {
     /// 파일 앱이 폴더를 보고 있는 동안(invalidate 전까지) 10초마다 NAS 를 다시 읽어,
     /// 달라졌으면 working set 으로 알린다 → 맥·다른 기기에서 바꾼 것이 곧 보인다
     private static func watch(_ id: String, smb: SMBConnections, snapshots: FolderSnapshots,
-                              manager: NSFileProviderManager?, isLockedNow: @escaping @Sendable (String) -> Bool,
+                              manager: NSFileProviderManager?, marks: @escaping @Sendable () -> LockMarks,
+                              isLockedNow: @escaping @Sendable (String) -> Bool,
                               relock: @escaping @Sendable () -> Void) -> Task<Void, Never> {
         Task {
             while !Task.isCancelled {
@@ -261,7 +349,7 @@ final class NASEnumerator: NSObject, NSFileProviderEnumerator {
                     relock()
                     return
                 }
-                if await snapshots.refresh(id, smb: smb) {
+                if await snapshots.refresh(id, smb: smb, marks: marks()) {
                     log.notice("NAS 쪽 변경 발견 \(id, privacy: .public)")
                     try? await manager?.signalEnumerator(for: .workingSet)
                 }
@@ -280,7 +368,8 @@ final class NASEnumerator: NSObject, NSFileProviderEnumerator {
             return
         }
         if container == .rootContainer {
-            observer.didEnumerate(shares.map { NASItem.folder(id: $0, parent: .rootContainer, name: $0) })
+            let marks = marks()
+            observer.didEnumerate(shares.map { NASItem.folder(id: marks.mark($0), parent: .rootContainer, name: $0) })
             observer.finishEnumerating(upTo: nil)
             return
         }
@@ -291,9 +380,10 @@ final class NASEnumerator: NSObject, NSFileProviderEnumerator {
                 let manager = try await smb.manager(share: share)
                 let entries = try await manager.contentsOfDirectory(atPath: path)
                 await snapshots.store(id, entries)
+                let marks = marks()
                 let items = entries.compactMap { entry -> NASItem? in
                     guard let name = entry[.nameKey] as? String, !ItemPath.isHidden(name) else { return nil }
-                    return NASItem(path: ItemPath.child(of: id, name: name), attributes: entry)
+                    return NASItem(path: ItemPath.child(of: id, name: name, marks: marks), attributes: entry)
                 }
                 observer.didEnumerate(items)
                 observer.finishEnumerating(upTo: nil)
@@ -313,8 +403,9 @@ final class NASEnumerator: NSObject, NSFileProviderEnumerator {
         Task {
             let (updates, deletes, generation, more) = await snapshots.drain()
             log.notice("working set 변경 넘김 바뀜=\(updates.count) 지움=\(deletes.count)")
-            if !updates.isEmpty { observer.didUpdate(updates) }
+            // 예전 번호 잠금 폴더를 먼저 지우고 새 번호 폴더를 넣는다 (같은 이름이 잠깐 둘이 되지 않도록)
             if !deletes.isEmpty { observer.didDeleteItems(withIdentifiers: deletes) }
+            if !updates.isEmpty { observer.didUpdate(updates) }
             observer.finishEnumeratingChanges(upTo: Self.anchor(generation), moreComing: more)
         }
     }
@@ -341,10 +432,11 @@ actor FolderSnapshots {
     private var checkedAt: [String: Date] = [:]
     private var pendingUpdates: [String: NASItem] = [:]
     private var pendingDeletes: Set<String> = []
-    /// 지운 다음 차례에 다시 넣을 잠금 폴더
-    private var readd: [String: NASItem] = [:]
-    /// 잠긴 뒤 이미 되돌려 놓은 잠금 폴더
-    private var hidden: Set<String> = []
+    /// 시간이 다 돼 이미 다시 잠갔는지 (확장이 다시 떠도 같은 잠금에 또 번호를 올리지 않도록 파일에 둔다)
+    private var relocked: Bool {
+        didSet { try? Data((relocked ? "1" : "0").utf8).write(to: relockedFile, options: .atomic) }
+    }
+    private let relockedFile: URL
     private(set) var generation = 0
     private let file: URL
 
@@ -352,6 +444,8 @@ actor FolderSnapshots {
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         file = caches.appendingPathComponent("listings-\(domainID).json")
         listings = (try? JSONDecoder().decode([String: [String: String]].self, from: Data(contentsOf: file))) ?? [:]
+        relockedFile = caches.appendingPathComponent("relocked-\(domainID)")
+        relocked = (try? Data(contentsOf: relockedFile)) == Data("1".utf8)
     }
 
     private static func listing(_ entries: [[URLResourceKey: any Sendable]]) -> [String: String] {
@@ -372,14 +466,13 @@ actor FolderSnapshots {
 
     /// 파일 앱이 목록 전체를 읽어 갔을 때 그 목록을 기억
     func store(_ id: String, _ entries: [[URLResourceKey: any Sendable]]) {
-        hidden = hidden.filter { !(id == $0 || id.hasPrefix($0 + "/")) }
         listings[id] = Self.listing(entries)
         checkedAt[id] = Date()
         save()
     }
 
     /// 폴더를 열 때 NAS 를 다시 읽어 달라진 것을 모아 둔다. 모은 게 있으면 true.
-    func refresh(_ id: String, smb: SMBConnections) async -> Bool {
+    func refresh(_ id: String, smb: SMBConnections, marks: LockMarks) async -> Bool {
         if let last = checkedAt[id], Date().timeIntervalSince(last) < 3 { return false }
         checkedAt[id] = Date()
         let (share, path) = ItemPath.split(id)
@@ -393,13 +486,13 @@ actor FolderSnapshots {
         var found = false
         for entry in entries {
             guard let name = entry[.nameKey] as? String, let sig = now[name], before[name] != sig else { continue }
-            let childID = ItemPath.child(of: id, name: name)
+            let childID = ItemPath.child(of: id, name: name, marks: marks)
             pendingUpdates[childID] = NASItem(path: childID, attributes: entry)
             pendingDeletes.remove(childID)
             found = true
         }
         for name in before.keys where now[name] == nil {
-            let childID = ItemPath.child(of: id, name: name)
+            let childID = ItemPath.child(of: id, name: name, marks: marks)
             pendingDeletes.insert(childID)
             pendingUpdates[childID] = nil
             found = true
@@ -408,38 +501,43 @@ actor FolderSnapshots {
         return found
     }
 
-    /// 다시 잠긴 잠금 폴더를 파일 앱에서 "처음 보는 폴더" 로 되돌린다: 폴더를 한 번 지웠다가(안쪽 목록·받은 파일도 같이 빠짐)
-    /// 다음 차례에 빈 껍데기로 다시 넣는다. 그러면 파일 앱이 폴더를 열 때 목록을 새로 묻고, 그때 인증을 요구할 수 있다.
-    /// 잠긴 뒤 폴더마다 한 번만 한다(다시 열려 목록을 읽으면 store 가 표시를 지움) — 계속 되풀이하지 않도록.
-    func hide(_ lockedPaths: [String]) -> Bool {
-        var found = false
-        for locked in lockedPaths where !hidden.contains(locked) {
-            hidden.insert(locked)
-            pendingDeletes.insert(locked)
-            pendingUpdates[locked] = nil
-            let isShare = !locked.contains("/")
-            readd[locked] = NASItem(id: NSFileProviderItemIdentifier(locked), parent: ItemPath.parent(of: locked),
-                                    name: (locked as NSString).lastPathComponent, isFolder: true, size: nil, modified: nil,
-                                    isShare: isShare)
-            for key in listings.keys where key == locked || key.hasPrefix(locked + "/") {
+    /// 아직 다시 잠그지 않았으면 표시하고 true
+    func beginRelock() -> Bool {
+        guard !relocked else { return false }
+        relocked = true
+        return true
+    }
+
+    func unlocked() {
+        if relocked { relocked = false }
+    }
+
+    /// working set 으로 넘길 지우기·넣기를 모은다. clearing 경로 아래 기억해 둔 목록은 버린다.
+    func apply(deletes: [String], updates: [NASItem], clearing: [String]) {
+        for id in deletes {
+            pendingDeletes.insert(id)
+            pendingUpdates[id] = nil
+        }
+        for item in updates {
+            pendingUpdates[item.itemIdentifier.rawValue] = item
+            pendingDeletes.remove(item.itemIdentifier.rawValue)
+        }
+        for locked in clearing {
+            for key in listings.keys {
+                let path = ItemPath.clean(key)
+                guard path == locked || path.hasPrefix(locked + "/") else { continue }
                 listings[key] = nil
                 checkedAt[key] = nil
             }
-            found = true
         }
-        if found { generation += 1; save() }
-        return found
+        generation += 1
+        save()
     }
 
     /// working set 이 변경을 물을 때 모아 둔 것을 넘기고 비운다
-    /// 지울 것 가운데 다시 넣을 잠금 폴더가 있으면 이번엔 지우기만 하고 moreComing 으로 곧바로 다음 차례를 받는다
     func drain() -> (updates: [NASItem], deletes: [NSFileProviderItemIdentifier], anchor: Int, more: Bool) {
-        if pendingDeletes.isEmpty, pendingUpdates.isEmpty, !readd.isEmpty {
-            defer { readd = [:]; generation += 1 }
-            return (Array(readd.values), [], generation + 1, false)
-        }
         defer { pendingUpdates = [:]; pendingDeletes = [] }
-        return (Array(pendingUpdates.values), pendingDeletes.map { NSFileProviderItemIdentifier($0) }, generation, !readd.isEmpty)
+        return (Array(pendingUpdates.values), pendingDeletes.map { NSFileProviderItemIdentifier($0) }, generation, false)
     }
 }
 
@@ -489,10 +587,47 @@ actor SMBConnections {
     }
 }
 
+/// 잠금 폴더 식별자에 붙이는 다시 잠근 번호. "|" 는 SMB 이름에 쓸 수 없는 글자라 실제 이름과 겹치지 않는다.
+struct LockMarks: Sendable {
+    let locked: [String]
+    let epoch: Int
+    static let none = LockMarks(locked: [], epoch: 0)
+
+    /// 식별자가 가리키는 경로가 잠금 폴더 자체면 끝에 번호를 붙인다
+    func mark(_ id: String) -> String {
+        locked.contains(ItemPath.clean(id)) ? ItemPath.dropMark(id) + "|\(epoch)" : id
+    }
+
+    /// 예전 번호(또는 번호 없는) 잠금 폴더이거나 그 안의 식별자인지
+    func isStale(_ id: String) -> Bool {
+        guard !locked.isEmpty else { return false }
+        var path = ""
+        for part in id.split(separator: "/", omittingEmptySubsequences: true) {
+            let name = ItemPath.dropMark(String(part))
+            path = path.isEmpty ? name : path + "/" + name
+            if locked.contains(path), part != "\(name)|\(epoch)" { return true }
+        }
+        return false
+    }
+}
+
 enum ItemPath {
+    /// "Book|3" → "Book"
+    static func dropMark(_ part: String) -> String {
+        guard let bar = part.lastIndex(of: "|"), !part[part.index(after: bar)...].isEmpty,
+              part[part.index(after: bar)...].allSatisfy(\.isNumber) else { return part }
+        return String(part[..<bar])
+    }
+
+    /// 식별자에서 잠금 번호를 떼어 낸 실제 경로: "Book|3/a.pdf" → "Book/a.pdf"
+    static func clean(_ id: String) -> String {
+        guard id.contains("|") else { return id }
+        return id.split(separator: "/", omittingEmptySubsequences: false).map { dropMark(String($0)) }.joined(separator: "/")
+    }
+
     /// "공유/a/b" → ("공유", "/a/b"), "공유" → ("공유", "/")
     static func split(_ id: String) -> (share: String, path: String) {
-        let parts = id.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        let parts = clean(id).split(separator: "/", omittingEmptySubsequences: true).map(String.init)
         return (parts.first ?? "", "/" + parts.dropFirst().joined(separator: "/"))
     }
 
@@ -516,8 +651,8 @@ enum ItemPath {
         try await manager.removeDirectory(atPath: path, recursive: false)
     }
 
-    static func child(of parent: String, name: String) -> String {
-        parent + "/" + name
+    static func child(of parent: String, name: String, marks: LockMarks) -> String {
+        marks.mark(parent + "/" + name)
     }
 
     /// 파일 앱이 주는 한글 이름은 NFD(자모 분리)라 그대로 NAS 에 쓰면 맥·윈도에서 열리지 않는다 → 만들거나 바꿀 때 NFC 로
@@ -555,11 +690,11 @@ final class NASItem: NSObject, NSFileProviderItem {
         documentSize = isFolder ? nil : size.map { NSNumber(value: $0) }
         contentModificationDate = modified
         if isShare {
-            capabilities = [.allowsReading, .allowsContentEnumerating, .allowsAddingSubItems]
+            capabilities = [.allowsReading, .allowsContentEnumerating, .allowsAddingSubItems, .allowsEvicting]
         } else if isFolder {
-            capabilities = [.allowsReading, .allowsContentEnumerating, .allowsAddingSubItems, .allowsDeleting, .allowsRenaming, .allowsReparenting]
+            capabilities = [.allowsReading, .allowsContentEnumerating, .allowsAddingSubItems, .allowsDeleting, .allowsRenaming, .allowsReparenting, .allowsEvicting]
         } else {
-            capabilities = [.allowsReading, .allowsWriting, .allowsDeleting, .allowsRenaming, .allowsReparenting]
+            capabilities = [.allowsReading, .allowsWriting, .allowsDeleting, .allowsRenaming, .allowsReparenting, .allowsEvicting]
         }
         let version = Data("\(size ?? 0)-\(modified?.timeIntervalSince1970 ?? 0)".utf8)
         itemVersion = NSFileProviderItemVersion(contentVersion: version, metadataVersion: version)
@@ -569,7 +704,7 @@ final class NASItem: NSObject, NSFileProviderItem {
     convenience init(path: String, attributes: [URLResourceKey: any Sendable]) {
         let isFolder = (attributes[.isDirectoryKey] as? Bool) ?? ((attributes[.isDirectoryKey] as? NSNumber)?.boolValue ?? false)
         self.init(id: NSFileProviderItemIdentifier(path), parent: ItemPath.parent(of: path),
-                  name: (path as NSString).lastPathComponent, isFolder: isFolder,
+                  name: ItemPath.dropMark((path as NSString).lastPathComponent), isFolder: isFolder,
                   size: (attributes[.fileSizeKey] as? NSNumber)?.int64Value,
                   modified: attributes[.contentModificationDateKey] as? Date)
     }

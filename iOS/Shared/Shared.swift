@@ -59,6 +59,23 @@ enum LockState {
         Shared.defaults.double(forKey: key(id)) > Date().timeIntervalSince1970
     }
 
+    /// 열림이 끝나는 시각 (1970 기준 초, 열린 적 없으면 0)
+    static func unlockedUntil(_ id: String) -> TimeInterval {
+        Shared.defaults.double(forKey: key(id))
+    }
+
+    /// 다시 잠글 때마다 1씩 느는 번호. 잠금 폴더 식별자에 붙여("Book|3"), 다시 잠기면 파일 앱이
+    /// 처음 보는 폴더로 여기게 한다 (예전 목록을 붙여 보여 주지 못하고 목록을 새로 물으니 그때 인증을 요구할 수 있다)
+    static func epoch(_ id: String) -> Int {
+        Shared.defaults.integer(forKey: "lockEpoch.\(id)")
+    }
+
+    static func bumpEpoch(_ id: String) -> Int {
+        let next = epoch(id) + 1
+        Shared.defaults.set(next, forKey: "lockEpoch.\(id)")
+        return next
+    }
+
     /// Face ID 로 확인했을 때
     static func unlock(_ id: String) {
         Shared.defaults.set(Date().timeIntervalSince1970 + Shared.lockInterval, forKey: key(id))
