@@ -9,7 +9,29 @@
 /* Begin PBXBuildFile section */
 		A10000000000000000000001 /* com.moimz.iNAS.agent.plist in Embed LaunchAgent */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* com.moimz.iNAS.agent.plist */; };
 		A10000000000000000000020 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000022 /* Sparkle */; };
+		B20000000000000000000001 /* iNASFileProvider.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B20000000000000000000021 /* iNASFileProvider.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		B20000000000000000000002 /* iNASFileProviderUI.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B20000000000000000000022 /* iNASFileProviderUI.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		B20000000000000000000063 /* AMSMB2 in Frameworks */ = {isa = PBXBuildFile; productRef = B20000000000000000000061 /* AMSMB2 */; };
+		B20000000000000000000064 /* AMSMB2 in Embed Frameworks */ = {isa = PBXBuildFile; productRef = B20000000000000000000061 /* AMSMB2 */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		B20000000000000000000065 /* AMSMB2 in Frameworks */ = {isa = PBXBuildFile; productRef = B20000000000000000000062 /* AMSMB2 */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		B20000000000000000000018 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A1000000000000000000000E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B20000000000000000000040;
+			remoteInfo = iNASFileProvider;
+		};
+		B20000000000000000000019 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A1000000000000000000000E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B20000000000000000000050;
+			remoteInfo = iNASFileProviderUI;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
 		A10000000000000000000003 /* Embed LaunchAgent */ = {
@@ -23,17 +45,63 @@
 			name = "Embed LaunchAgent";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B20000000000000000000014 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				B20000000000000000000001 /* iNASFileProvider.appex in Embed Foundation Extensions */,
+				B20000000000000000000002 /* iNASFileProviderUI.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B20000000000000000000015 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				B20000000000000000000064 /* AMSMB2 in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		A10000000000000000000002 /* com.moimz.iNAS.agent.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = com.moimz.iNAS.agent.plist; sourceTree = "<group>"; };
 		A10000000000000000000004 /* iNAS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = iNAS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B20000000000000000000020 /* iNAS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = iNAS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B20000000000000000000021 /* iNASFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = iNASFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		B20000000000000000000022 /* iNASFileProviderUI.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = iNASFileProviderUI.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		A10000000000000000000005 /* iNAS */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = iNAS;
+			sourceTree = "<group>";
+		};
+		B20000000000000000000030 /* App */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = App;
+			sourceTree = "<group>";
+		};
+		B20000000000000000000031 /* FileProvider */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = FileProvider;
+			sourceTree = "<group>";
+		};
+		B20000000000000000000032 /* FileProviderUI */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = FileProviderUI;
+			sourceTree = "<group>";
+		};
+		B20000000000000000000033 /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Shared;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -47,6 +115,29 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B20000000000000000000012 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B20000000000000000000063 /* AMSMB2 in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B20000000000000000000042 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B20000000000000000000065 /* AMSMB2 in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B20000000000000000000052 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -55,6 +146,7 @@
 			children = (
 				A10000000000000000000005 /* iNAS */,
 				A10000000000000000000008 /* Support */,
+				B20000000000000000000034 /* iOS */,
 				A10000000000000000000009 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -71,8 +163,22 @@
 			isa = PBXGroup;
 			children = (
 				A10000000000000000000004 /* iNAS.app */,
+				B20000000000000000000020 /* iNAS.app */,
+				B20000000000000000000021 /* iNASFileProvider.appex */,
+				B20000000000000000000022 /* iNASFileProviderUI.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		B20000000000000000000034 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				B20000000000000000000030 /* App */,
+				B20000000000000000000031 /* FileProvider */,
+				B20000000000000000000032 /* FileProviderUI */,
+				B20000000000000000000033 /* Shared */,
+			);
+			path = iOS;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -102,6 +208,81 @@
 			productReference = A10000000000000000000004 /* iNAS.app */;
 			productType = "com.apple.product-type.application";
 		};
+		B20000000000000000000010 /* iNAS-iOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B20000000000000000000072 /* Build configuration list for PBXNativeTarget "iNAS-iOS" */;
+			buildPhases = (
+				B20000000000000000000011 /* Sources */,
+				B20000000000000000000012 /* Frameworks */,
+				B20000000000000000000013 /* Resources */,
+				B20000000000000000000014 /* Embed Foundation Extensions */,
+				B20000000000000000000015 /* Embed Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B20000000000000000000016 /* PBXTargetDependency */,
+				B20000000000000000000017 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				B20000000000000000000030 /* App */,
+				B20000000000000000000033 /* Shared */,
+			);
+			name = iNAS-iOS;
+			packageProductDependencies = (
+				B20000000000000000000061 /* AMSMB2 */,
+			);
+			productName = iNAS-iOS;
+			productReference = B20000000000000000000020 /* iNAS.app */;
+			productType = "com.apple.product-type.application";
+		};
+		B20000000000000000000040 /* iNASFileProvider */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B20000000000000000000075 /* Build configuration list for PBXNativeTarget "iNASFileProvider" */;
+			buildPhases = (
+				B20000000000000000000041 /* Sources */,
+				B20000000000000000000042 /* Frameworks */,
+				B20000000000000000000043 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				B20000000000000000000031 /* FileProvider */,
+				B20000000000000000000033 /* Shared */,
+			);
+			name = iNASFileProvider;
+			packageProductDependencies = (
+				B20000000000000000000062 /* AMSMB2 */,
+			);
+			productName = iNASFileProvider;
+			productReference = B20000000000000000000021 /* iNASFileProvider.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		B20000000000000000000050 /* iNASFileProviderUI */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B20000000000000000000078 /* Build configuration list for PBXNativeTarget "iNASFileProviderUI" */;
+			buildPhases = (
+				B20000000000000000000051 /* Sources */,
+				B20000000000000000000052 /* Frameworks */,
+				B20000000000000000000053 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				B20000000000000000000032 /* FileProviderUI */,
+				B20000000000000000000033 /* Shared */,
+			);
+			name = iNASFileProviderUI;
+			packageProductDependencies = (
+			);
+			productName = iNASFileProviderUI;
+			productReference = B20000000000000000000022 /* iNASFileProviderUI.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -113,6 +294,15 @@
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
 					A1000000000000000000000A = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					B20000000000000000000010 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					B20000000000000000000040 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					B20000000000000000000050 = {
 						CreatedOnToolsVersion = 27.0;
 					};
 				};
@@ -129,6 +319,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				A10000000000000000000021 /* XCRemoteSwiftPackageReference "Sparkle" */,
+				B20000000000000000000060 /* XCRemoteSwiftPackageReference "AMSMB2" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A10000000000000000000009 /* Products */;
@@ -136,12 +327,36 @@
 			projectRoot = "";
 			targets = (
 				A1000000000000000000000A /* iNAS */,
+				B20000000000000000000010 /* iNAS-iOS */,
+				B20000000000000000000040 /* iNASFileProvider */,
+				B20000000000000000000050 /* iNASFileProviderUI */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		A1000000000000000000000D /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B20000000000000000000013 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B20000000000000000000043 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B20000000000000000000053 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -158,7 +373,41 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B20000000000000000000011 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B20000000000000000000041 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B20000000000000000000051 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B20000000000000000000016 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B20000000000000000000040 /* iNASFileProvider */;
+			targetProxy = B20000000000000000000018 /* PBXContainerItemProxy */;
+		};
+		B20000000000000000000017 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B20000000000000000000050 /* iNASFileProviderUI */;
+			targetProxy = B20000000000000000000019 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		A10000000000000000000010 /* Debug */ = {
@@ -261,6 +510,154 @@
 			};
 			name = Release;
 		};
+		B20000000000000000000070 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = iOS/App.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = XSDBV8D2XL;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = iNAS;
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "잠금 폴더를 열 때 Face ID 로 확인합니다.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "같은 네트워크에 있는 NAS 의 SMB 공유에 연결합니다.";
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", );
+				MARKETING_VERSION = 2.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.moimz.iNAS;
+				PRODUCT_NAME = iNAS;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		B20000000000000000000071 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = iOS/App.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = XSDBV8D2XL;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = iNAS;
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "잠금 폴더를 열 때 Face ID 로 확인합니다.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "같은 네트워크에 있는 NAS 의 SMB 공유에 연결합니다.";
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", );
+				MARKETING_VERSION = 2.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.moimz.iNAS;
+				PRODUCT_NAME = iNAS;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		B20000000000000000000073 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = iOS/FileProvider.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = XSDBV8D2XL;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS/FileProvider-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = iNAS;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", );
+				MARKETING_VERSION = 2.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.moimz.iNAS.FileProvider;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		B20000000000000000000074 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = iOS/FileProvider.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = XSDBV8D2XL;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS/FileProvider-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = iNAS;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", );
+				MARKETING_VERSION = 2.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.moimz.iNAS.FileProvider;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		B20000000000000000000076 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = iOS/FileProvider.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = XSDBV8D2XL;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS/FileProviderUI-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = iNAS;
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "잠금 폴더를 열 때 Face ID 로 확인합니다.";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", );
+				MARKETING_VERSION = 2.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.moimz.iNAS.FileProviderUI;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		B20000000000000000000077 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = iOS/FileProvider.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = XSDBV8D2XL;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS/FileProviderUI-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = iNAS;
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "잠금 폴더를 열 때 Face ID 로 확인합니다.";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", );
+				MARKETING_VERSION = 2.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.moimz.iNAS.FileProviderUI;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -282,6 +679,33 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		B20000000000000000000072 /* Build configuration list for PBXNativeTarget "iNAS-iOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B20000000000000000000070 /* Debug */,
+				B20000000000000000000071 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B20000000000000000000075 /* Build configuration list for PBXNativeTarget "iNASFileProvider" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B20000000000000000000073 /* Debug */,
+				B20000000000000000000074 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B20000000000000000000078 /* Build configuration list for PBXNativeTarget "iNASFileProviderUI" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B20000000000000000000076 /* Debug */,
+				B20000000000000000000077 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
@@ -293,6 +717,14 @@
 				version = 2.10.1;
 			};
 		};
+		B20000000000000000000060 /* XCRemoteSwiftPackageReference "AMSMB2" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/amosavian/AMSMB2.git";
+			requirement = {
+				kind = exactVersion;
+				version = 4.0.3;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -300,6 +732,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A10000000000000000000021 /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
+		};
+		B20000000000000000000061 /* AMSMB2 */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B20000000000000000000060 /* XCRemoteSwiftPackageReference "AMSMB2" */;
+			productName = AMSMB2;
+		};
+		B20000000000000000000062 /* AMSMB2 */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B20000000000000000000060 /* XCRemoteSwiftPackageReference "AMSMB2" */;
+			productName = AMSMB2;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

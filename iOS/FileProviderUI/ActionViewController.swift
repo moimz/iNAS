@@ -43,7 +43,7 @@ final class ActionViewController: FPUIActionExtensionViewController {
             messageLabel.text = "NAS 에 로그인하지 못했습니다.\niNAS 앱에서 아이디와 비밀번호를 확인하세요."
             unlockButton.isHidden = true
         } else {
-            messageLabel.text = "잠금 폴더입니다.\nFace ID 로 확인하면 \(Int(Shared.lockInterval / 60))분 동안 열립니다."
+            messageLabel.text = "잠금 폴더입니다.\nFace ID 로 확인하면 \(Shared.lockMinutes)분 동안 열립니다."
             unlockButton.isHidden = false
             authenticate()
         }

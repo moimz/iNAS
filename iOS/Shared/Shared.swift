@@ -4,9 +4,13 @@ import Security
 /// 앱·파일 제공 확장·인증 화면 확장이 함께 쓰는 설정.
 /// 서버 목록과 잠금 해제 시각은 App Group UserDefaults, 비밀번호는 App Group 키체인.
 enum Shared {
-    static let appGroup = "group.com.moimz.iNAS.fptest"
-    /// 잠금 폴더를 마지막으로 쓴 뒤 이만큼 지나면 다시 잠근다
-    static let lockInterval: TimeInterval = 5 * 60
+    static let appGroup = "group.com.moimz.iNAS"
+    /// 잠금 폴더를 마지막으로 쓴 뒤 이만큼 지나면 다시 잠근다 (앱 설정, 기본 5분)
+    static var lockMinutes: Int {
+        get { let v = defaults.integer(forKey: "lockMinutes"); return v > 0 ? v : 5 }
+        set { defaults.set(newValue, forKey: "lockMinutes") }
+    }
+    static var lockInterval: TimeInterval { TimeInterval(lockMinutes * 60) }
 
     static var defaults: UserDefaults { UserDefaults(suiteName: appGroup) ?? .standard }
 }
@@ -74,7 +78,7 @@ enum PasswordStore {
     private static func query(_ id: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "com.moimz.iNAS.fptest",
+            kSecAttrService as String: "com.moimz.iNAS",
             kSecAttrAccount as String: id,
             kSecAttrAccessGroup as String: Shared.appGroup,
         ]
