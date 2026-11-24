@@ -1,17 +1,22 @@
 import AMSMB2
 import FileProvider
 import UniformTypeIdentifiers
+import os
+
+let log = Logger(subsystem: "com.moimz.iNAS", category: "FileProvider")
 
 /// NAS 서버 하나 = 파일 앱 위치 하나 (도메인 식별자 = 서버 id).
 /// 맨 위에는 iNAS 에서 고른 공유만 폴더로 보이고, 그 안은 SMB 폴더를 그대로 보여 준다.
 /// 항목 식별자: "공유/경로/이름" (맨 위 = rootContainer, 공유 = "공유")
 final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     let domain: NSFileProviderDomain
+    let snapshots: FolderSnapshots
     let smb: SMBConnections
 
     required init(domain: NSFileProviderDomain) {
         self.domain = domain
         smb = SMBConnections(serverID: domain.identifier.rawValue)
+        snapshots = FolderSnapshots(domainID: domain.identifier.rawValue)
         super.init()
     }
 
@@ -81,7 +86,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             completionHandler(nil, [], false, NSFileProviderError(.cannotSynchronize))
             return progress
         }
-        let newID = ItemPath.child(of: parent.rawValue, name: itemTemplate.filename)
+        let newID = ItemPath.child(of: parent.rawValue, name: ItemPath.nfc(itemTemplate.filename))
         if let error = lockError(for: newID) {
             completionHandler(nil, [], false, error)
             return progress
@@ -127,7 +132,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                 var id = oldID
                 if changedFields.contains(.filename) || changedFields.contains(.parentItemIdentifier) {
                     // 같은 공유 안에서만 옮긴다
-                    let newID = ItemPath.child(of: item.parentItemIdentifier.rawValue, name: item.filename)
+                    let newID = ItemPath.child(of: item.parentItemIdentifier.rawValue, name: ItemPath.nfc(item.filename))
                     let (newShare, newPath) = ItemPath.split(newID)
                     guard newShare == share else { throw NSFileProviderError(.cannotSynchronize) }
                     try await manager.moveItem(atPath: oldPath, toPath: newPath)
@@ -162,7 +167,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         Task {
             do {
                 let manager = try await smb.manager(share: share)
-                try await manager.removeItem(atPath: path)
+                try await ItemPath.removeTree(manager, path: path)
                 completionHandler(nil)
             } catch {
                 completionHandler(await smb.mapped(error))
@@ -176,7 +181,8 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
            let error = lockError(for: containerItemIdentifier.rawValue) {
             throw error
         }
-        return NASEnumerator(container: containerItemIdentifier, shares: server?.shares ?? [], smb: smb)
+        return NASEnumerator(container: containerItemIdentifier, shares: server?.shares ?? [], smb: smb,
+                             snapshots: snapshots, manager: NSFileProviderManager(for: domain))
     }
 
     /// 받은 내용을 넘겨줄 임시 파일 자리. File Provider 전용 임시 폴더에 두어야
@@ -202,15 +208,40 @@ final class NASEnumerator: NSObject, NSFileProviderEnumerator {
     let container: NSFileProviderItemIdentifier
     let shares: [String]
     let smb: SMBConnections
+    let snapshots: FolderSnapshots
 
-    init(container: NSFileProviderItemIdentifier, shares: [String], smb: SMBConnections) {
+    private var watcher: Task<Void, Never>?
+
+    init(container: NSFileProviderItemIdentifier, shares: [String], smb: SMBConnections, snapshots: FolderSnapshots,
+         manager: NSFileProviderManager?) {
         self.container = container
         self.shares = shares
         self.smb = smb
+        self.snapshots = snapshots
         super.init()
+        if container != .rootContainer, container != .workingSet {
+            watcher = Self.watch(container.rawValue, smb: smb, snapshots: snapshots, manager: manager)
+        }
     }
 
-    func invalidate() {}
+    /// 파일 앱이 폴더를 보고 있는 동안(invalidate 전까지) 10초마다 NAS 를 다시 읽어,
+    /// 달라졌으면 working set 으로 알린다 → 맥·다른 기기에서 바꾼 것이 곧 보인다
+    private static func watch(_ id: String, smb: SMBConnections, snapshots: FolderSnapshots,
+                              manager: NSFileProviderManager?) -> Task<Void, Never> {
+        Task {
+            while !Task.isCancelled {
+                if await snapshots.refresh(id, smb: smb) {
+                    log.notice("NAS 쪽 변경 발견 \(id, privacy: .public)")
+                    try? await manager?.signalEnumerator(for: .workingSet)
+                }
+                try? await Task.sleep(for: .seconds(10))
+            }
+        }
+    }
+
+    func invalidate() {
+        watcher?.cancel()
+    }
 
     func enumerateItems(for observer: NSFileProviderEnumerationObserver, startingAt page: NSFileProviderPage) {
         if container == .workingSet {
@@ -228,6 +259,7 @@ final class NASEnumerator: NSObject, NSFileProviderEnumerator {
             do {
                 let manager = try await smb.manager(share: share)
                 let entries = try await manager.contentsOfDirectory(atPath: path)
+                await snapshots.store(id, entries)
                 let items = entries.compactMap { entry -> NASItem? in
                     guard let name = entry[.nameKey] as? String, !ItemPath.isHidden(name) else { return nil }
                     return NASItem(path: ItemPath.child(of: id, name: name), attributes: entry)
@@ -240,17 +272,110 @@ final class NASEnumerator: NSObject, NSFileProviderEnumerator {
         }
     }
 
-    /// 변경 추적 대신 매번 "기준점 만료" 로 답해, 폴더를 다시 볼 때 목록 전체를 다시 읽게 한다 (시험용 단순화)
+    /// 폴더는 늘 "기준점 만료" 로 답해 다시 볼 때 전체를 읽게 하고,
+    /// working set 은 폴더를 열 때 모아 둔 NAS 쪽 변경(만들기·고치기·지우기)을 넘긴다
     func enumerateChanges(for observer: NSFileProviderChangeObserver, from anchor: NSFileProviderSyncAnchor) {
-        if container == .workingSet {
-            observer.finishEnumeratingChanges(upTo: anchor, moreComing: false)
-        } else {
+        guard container == .workingSet else {
             observer.finishEnumeratingWithError(NSFileProviderError(.syncAnchorExpired))
+            return
+        }
+        Task {
+            let (updates, deletes, generation) = await snapshots.drain()
+            log.notice("working set 변경 넘김 바뀜=\(updates.count) 지움=\(deletes.count)")
+            if !updates.isEmpty { observer.didUpdate(updates) }
+            if !deletes.isEmpty { observer.didDeleteItems(withIdentifiers: deletes) }
+            observer.finishEnumeratingChanges(upTo: Self.anchor(generation), moreComing: false)
         }
     }
 
     func currentSyncAnchor(completionHandler: @escaping (NSFileProviderSyncAnchor?) -> Void) {
-        completionHandler(NSFileProviderSyncAnchor(Data(String(Date().timeIntervalSince1970).utf8)))
+        guard container == .workingSet else {
+            completionHandler(NSFileProviderSyncAnchor(Data(String(Date().timeIntervalSince1970).utf8)))
+            return
+        }
+        Task { completionHandler(Self.anchor(await snapshots.generation)) }
+    }
+
+    private static func anchor(_ generation: Int) -> NSFileProviderSyncAnchor {
+        NSFileProviderSyncAnchor(Data("ws-\(generation)".utf8))
+    }
+}
+
+/// 파일 앱은 한 번 본 폴더를 기억해 두고 다시 묻지 않는다. iOS 는 working set 신호만 받으므로
+/// 폴더를 열 때 NAS 목록을 지난번과 견주어 달라진 것만 모아 두고 working set 으로 알린다
+/// (맥·다른 기기에서 만들고 지운 것이 보이도록). 지난 목록은 확장이 다시 떠도 남게 캐시 파일에 둔다.
+actor FolderSnapshots {
+    /// 폴더 id → (이름 → 크기|수정 시각)
+    private var listings: [String: [String: String]]
+    private var checkedAt: [String: Date] = [:]
+    private var pendingUpdates: [String: NASItem] = [:]
+    private var pendingDeletes: Set<String> = []
+    private(set) var generation = 0
+    private let file: URL
+
+    init(domainID: String) {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        file = caches.appendingPathComponent("listings-\(domainID).json")
+        listings = (try? JSONDecoder().decode([String: [String: String]].self, from: Data(contentsOf: file))) ?? [:]
+    }
+
+    private static func listing(_ entries: [[URLResourceKey: any Sendable]]) -> [String: String] {
+        var result: [String: String] = [:]
+        for entry in entries {
+            guard let name = entry[.nameKey] as? String, !ItemPath.isHidden(name) else { continue }
+            let size = (entry[.fileSizeKey] as? NSNumber)?.int64Value ?? -1
+            let modified = (entry[.contentModificationDateKey] as? Date)?.timeIntervalSince1970 ?? 0
+            result[name] = "\(size)|\(Int(modified))"
+        }
+        return result
+    }
+
+    private func save() {
+        if listings.count > 300 { listings = Dictionary(uniqueKeysWithValues: listings.prefix(200).map { ($0.key, $0.value) }) }
+        try? JSONEncoder().encode(listings).write(to: file, options: .atomic)
+    }
+
+    /// 파일 앱이 목록 전체를 읽어 갔을 때 그 목록을 기억
+    func store(_ id: String, _ entries: [[URLResourceKey: any Sendable]]) {
+        listings[id] = Self.listing(entries)
+        checkedAt[id] = Date()
+        save()
+    }
+
+    /// 폴더를 열 때 NAS 를 다시 읽어 달라진 것을 모아 둔다. 모은 게 있으면 true.
+    func refresh(_ id: String, smb: SMBConnections) async -> Bool {
+        if let last = checkedAt[id], Date().timeIntervalSince(last) < 3 { return false }
+        checkedAt[id] = Date()
+        let (share, path) = ItemPath.split(id)
+        guard let manager = try? await smb.manager(share: share),
+              let entries = try? await manager.contentsOfDirectory(atPath: path) else { return false }
+        let now = Self.listing(entries)
+        // 지난 목록이 없으면(처음·캐시 지워짐) 지운 건 알 수 없으니 지금 있는 것만 모두 알린다
+        let before = listings[id] ?? [:]
+        listings[id] = now
+        save()
+        var found = false
+        for entry in entries {
+            guard let name = entry[.nameKey] as? String, let sig = now[name], before[name] != sig else { continue }
+            let childID = ItemPath.child(of: id, name: name)
+            pendingUpdates[childID] = NASItem(path: childID, attributes: entry)
+            pendingDeletes.remove(childID)
+            found = true
+        }
+        for name in before.keys where now[name] == nil {
+            let childID = ItemPath.child(of: id, name: name)
+            pendingDeletes.insert(childID)
+            pendingUpdates[childID] = nil
+            found = true
+        }
+        if found { generation += 1 }
+        return found
+    }
+
+    /// working set 이 변경을 물을 때 모아 둔 것을 넘기고 비운다
+    func drain() -> (updates: [NASItem], deletes: [NSFileProviderItemIdentifier], anchor: Int) {
+        defer { pendingUpdates = [:]; pendingDeletes = [] }
+        return (Array(pendingUpdates.values), pendingDeletes.map { NSFileProviderItemIdentifier($0) }, generation)
     }
 }
 
@@ -307,8 +432,33 @@ enum ItemPath {
         return (parts.first ?? "", "/" + parts.dropFirst().joined(separator: "/"))
     }
 
+    /// AMSMB2 의 removeItem 은 폴더 속 파일 경로를 URL 로 만들면서 한글을 NFD 로 바꿔 놓아 NAS 가 '없는 파일' 로 답한다
+    /// → 서버가 준 이름 그대로 문자열로 이어 붙여 직접 하나씩 지운다
+    static func removeTree(_ manager: SMB2Manager, path: String) async throws {
+        let attributes = try await manager.attributesOfItem(atPath: path)
+        guard attributes.isDirectory else {
+            try await manager.removeFile(atPath: path)
+            return
+        }
+        for entry in try await manager.contentsOfDirectory(atPath: path) {
+            guard let name = entry[.nameKey] as? String, name != ".", name != ".." else { continue }
+            let childPath = (path.hasSuffix("/") ? path : path + "/") + name
+            if (entry[.isDirectoryKey] as? Bool) == true {
+                try await removeTree(manager, path: childPath)
+            } else {
+                try await manager.removeFile(atPath: childPath)
+            }
+        }
+        try await manager.removeDirectory(atPath: path, recursive: false)
+    }
+
     static func child(of parent: String, name: String) -> String {
         parent + "/" + name
+    }
+
+    /// 파일 앱이 주는 한글 이름은 NFD(자모 분리)라 그대로 NAS 에 쓰면 맥·윈도에서 열리지 않는다 → 만들거나 바꿀 때 NFC 로
+    static func nfc(_ name: String) -> String {
+        name.precomposedStringWithCanonicalMapping
     }
 
     static func parent(of id: String) -> NSFileProviderItemIdentifier {
