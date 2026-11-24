@@ -51,7 +51,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             return progress
         }
         let (share, path) = ItemPath.split(itemIdentifier.rawValue)
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let url = temporaryFileURL()
         Task {
             do {
                 let manager = try await smb.manager(share: share)
@@ -177,6 +177,13 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             throw error
         }
         return NASEnumerator(container: containerItemIdentifier, shares: server?.shares ?? [], smb: smb)
+    }
+
+    /// 받은 내용을 넘겨줄 임시 파일 자리. File Provider 전용 임시 폴더에 두어야
+    /// 시스템이 복사하지 않고 옮겨 가고, 남은 것도 시스템이 정리한다.
+    private func temporaryFileURL() -> URL {
+        let directory = (try? NSFileProviderManager(for: domain)?.temporaryDirectoryURL()) ?? FileManager.default.temporaryDirectory
+        return directory.appendingPathComponent(UUID().uuidString)
     }
 
     /// 잠금 폴더 안인데 열려 있지 않으면 "인증 필요". 열려 있으면 시간을 늘린다.
