@@ -126,9 +126,13 @@ struct ServerListView: View {
         }
     }
 
+    /// "버전 2.3.1 (빌드 41 · abc1234)" — 뒤는 빌드한 커밋 (Scripts/stamp-commit.sh, "+" 는 커밋 전 변경 포함)
     static var versionText: String {
         let info = Bundle.main.infoDictionary
-        return "버전 \(info?["CFBundleShortVersionString"] as? String ?? "?") (\(info?["CFBundleVersion"] as? String ?? "?"))"
+        let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        let commit = info?["INASCommit"] as? String
+        return "버전 \(version) (빌드 \(build)\(commit.map { " · \($0)" } ?? ""))"
     }
 
     private func save(_ server: NASServer, password: String?) {

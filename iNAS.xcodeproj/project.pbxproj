@@ -196,6 +196,7 @@
 				A10000000000000000000006 /* Frameworks */,
 				A1000000000000000000000D /* Resources */,
 				A10000000000000000000003 /* Embed LaunchAgent */,
+				C3000000000000000000A001 /* Stamp Commit */,
 			);
 			buildRules = (
 			);
@@ -221,6 +222,7 @@
 				B20000000000000000000013 /* Resources */,
 				B20000000000000000000014 /* Embed Foundation Extensions */,
 				B20000000000000000000015 /* Embed Frameworks */,
+				C3000000000000000000A002 /* Stamp Commit */,
 			);
 			buildRules = (
 			);
@@ -369,6 +371,51 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		C3000000000000000000A001 /* Stamp Commit */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+			);
+			name = "Stamp Commit";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/Scripts/stamp-commit.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+		C3000000000000000000A002 /* Stamp Commit */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+			);
+			name = "Stamp Commit";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/Scripts/stamp-commit.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		A1000000000000000000000C /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -468,6 +515,7 @@
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = "iNAS-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = iNAS;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
@@ -497,6 +545,7 @@
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = "iNAS-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = iNAS;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
@@ -525,6 +574,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = iNAS;
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "같은 네트워크에 있는 NAS 의 SMB 공유에 연결합니다.";
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", );
@@ -549,6 +599,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = iNAS;
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "같은 네트워크에 있는 NAS 의 SMB 공유에 연결합니다.";
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", );

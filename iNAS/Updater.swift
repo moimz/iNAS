@@ -56,7 +56,9 @@ struct SettingsView: View {
         let info = Bundle.main.infoDictionary
         let short = info?["CFBundleShortVersionString"] as? String ?? "?"
         let build = info?["CFBundleVersion"] as? String ?? "?"
-        return "\(short) (\(build))"
+        // "2.3.1 (빌드 41 · abc1234)" — 뒤는 빌드한 커밋 (Scripts/stamp-commit.sh)
+        let commit = info?["INASCommit"] as? String
+        return "\(short) (빌드 \(build)\(commit.map { " · \($0)" } ?? ""))"
     }
 
     var body: some View {
