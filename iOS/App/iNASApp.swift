@@ -21,10 +21,10 @@ struct ServerListView: View {
     @State private var cacheSize: Int64?
     /// 썸네일을 못 만든 최근 기록
     @State private var failures = ThumbnailFailures.all()
-    /// 서버별 받아 둔 파일 크기 (서버 id → 바이트, 모르면 없음)
-    @State private var downloaded: [String: Int64] = [:]
-    /// 비우는 중인 서버 id
-    @State private var evicting: Set<String> = []
+    /// 모든 서버에서 받아 둔 파일 크기 (바이트, 모르면 nil)
+    @State private var downloadedSize: Int64?
+    /// 받아 둔 파일을 비우는 중
+    @State private var evicting = false
     @Environment(\.scenePhase) private var scenePhase
 
     private func serverName(_ id: String) -> String {
@@ -51,28 +51,12 @@ struct ServerListView: View {
                     Text("파일 앱 › 둘러보기 › 위치에 서버마다 하나씩 나타납니다. 왼쪽으로 밀면 서버를 지울 수 있습니다.")
                 }
 
-                if !servers.isEmpty {
-                    Section {
-                        ForEach(servers) { server in
-                            HStack {
-                                Text(server.name)
-                                Spacer()
-                                if evicting.contains(server.id) {
-                                    ProgressView()
-                                } else {
-                                    Text(downloaded[server.id].map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "…")
-                                        .foregroundStyle(.secondary)
-                                    Button("비우기", role: .destructive) { evict(server) }
-                                        .buttonStyle(.borderless)
-                                        .disabled((downloaded[server.id] ?? 0) == 0)
-                                }
-                            }
-                        }
-                    } header: {
-                        Text("받아 둔 파일")
-                    } footer: {
-                        Text("파일 앱에서 받아 두어 구름 표시가 없는 파일입니다. 비우면 다시 구름 표시가 되고 NAS 원본은 그대로이며, 열 때 다시 받습니다. 공간이 부족하면 아이폰이 알아서 비우기도 합니다.")
-                    }
+                Section {
+                    LabeledContent("받아 둔 파일", value: downloadedSize.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "…")
+                    Button("받아 둔 파일 비우기", role: .destructive) { evictAll() }
+                        .disabled(evicting || (downloadedSize ?? 0) == 0)
+                } footer: {
+                    Text("파일 앱에서 받아 두어 구름 표시가 없는 파일입니다. 비우면 다시 구름 표시가 되고 NAS 원본은 그대로이며, 열 때 다시 받습니다. 공간이 부족하면 아이폰이 알아서 비우기도 합니다.")
                 }
 
                 Section {
@@ -168,21 +152,22 @@ struct ServerListView: View {
         NSFileProviderManager.remove(server.domain) { _ in }
     }
 
-    /// 이 서버에서 받아 둔 파일을 모두 비운다 (목록은 그대로, 다시 열면 다시 받음)
-    private func evict(_ server: NASServer) {
-        evicting.insert(server.id)
+    /// 모든 서버에서 받아 둔 파일을 비운다 (목록은 그대로, 다시 열면 다시 받음)
+    private func evictAll() {
+        evicting = true
         Task {
-            let failed = await DownloadedFiles.evictAll(in: server.domain)
-            evicting.remove(server.id)
-            if failed > 0 { message = "받은 파일 \(failed)개를 비우지 못했습니다. (열려 있거나 아직 NAS 에 올리는 중인 파일)" }
+            var failed = 0
+            for server in servers { failed += await DownloadedFiles.evictAll(in: server.domain) }
+            evicting = false
+            if failed > 0 { message = "받아 둔 파일 \(failed)개를 비우지 못했습니다. (열려 있거나 아직 NAS 에 올리는 중인 파일)" }
             await refreshDownloaded()
         }
     }
 
     private func refreshDownloaded() async {
-        for server in servers {
-            if let size = await DownloadedFiles.size(of: server.domain) { downloaded[server.id] = size }
-        }
+        var total: Int64 = 0
+        for server in servers { total += await DownloadedFiles.size(of: server.domain) ?? 0 }
+        downloadedSize = total
     }
 
     /// 서버 목록과 파일 앱 위치를 맞춘다: 목록에 없는 위치는 지우고, 빠진 서버는 등록한다
