@@ -107,6 +107,8 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             do {
                 let manager = try await smb.manager(share: share)
                 let attributes = try await manager.attributesOfItem(atPath: path)
+                // 바뀜 (2026-11-25): 첫 진행 알림(약 1MB)을 기다리지 않고 크기부터 알려 원형 진행이 바로 0% 로 뜨게
+                progress.totalUnitCount = max((attributes[.fileSizeKey] as? NSNumber)?.int64Value ?? 1, 1)
                 // 디스크로 바로 흘려 받는다 (약 1MB 마다 진행 알림, 파일 전체를 메모리에 올리지 않음)
                 try await manager.downloadItem(atPath: path, to: url) { bytes, total in
                     progress.totalUnitCount = max(total, 1)
@@ -236,6 +238,7 @@ final class NASEnumerator: NSObject, NSFileProviderEnumerator {
     let shares: [String]
     let smb: SMBConnections
     let snapshots: FolderSnapshots
+    let manager: NSFileProviderManager?
 
     private var watcher: Task<Void, Never>?
 
@@ -245,6 +248,7 @@ final class NASEnumerator: NSObject, NSFileProviderEnumerator {
         self.shares = shares
         self.smb = smb
         self.snapshots = snapshots
+        self.manager = manager
         super.init()
         if container != .rootContainer, container != .workingSet {
             watcher = Self.watch(container.rawValue, smb: smb, snapshots: snapshots, manager: manager)
@@ -293,7 +297,10 @@ final class NASEnumerator: NSObject, NSFileProviderEnumerator {
             do {
                 let manager = try await smb.manager(share: share)
                 let entries = try await manager.contentsOfDirectory(atPath: path)
-                await snapshots.store(id, entries)
+                log.notice("폴더 목록 읽음 \(id, privacy: .public) \(entries.count)개")
+                if await snapshots.store(id, entries) {
+                    try? await self.manager?.signalEnumerator(for: .workingSet)
+                }
                 let items = entries.compactMap { entry -> NASItem? in
                     guard let name = entry[.nameKey] as? String, !ItemPath.isHidden(name) else { return nil }
                     return NASItem(path: ItemPath.child(of: id, name: name), attributes: entry)
@@ -306,11 +313,17 @@ final class NASEnumerator: NSObject, NSFileProviderEnumerator {
         }
     }
 
-    /// 폴더는 늘 "기준점 만료" 로 답해 다시 볼 때 전체를 읽게 하고,
-    /// working set 은 폴더를 열 때 모아 둔 NAS 쪽 변경(만들기·고치기·지우기)을 넘긴다
+    /// 바뀜 (2026-11-25, 사용자: 내려받는 동안 목록 스크롤이 계속 움직임): 예전엔 폴더가 늘 "기준점 만료" 로 답하고
+    /// 기준점도 물을 때마다 새 시각이라, 파일 앱이 변경을 물을 때마다(내려받는 중에도) 폴더 전체를 다시 읽어 목록을 새로 그렸다.
+    /// 이제 폴더 기준점은 고정값이고 변경은 없다고 답한다. NAS 쪽 변경은 폴더를 보는 동안 watch 가 working set 으로 넘긴다.
+    /// 예전 빌드의 기준점(시각)을 들고 오면 한 번만 만료로 답해 새로 읽게 한다.
     func enumerateChanges(for observer: NSFileProviderChangeObserver, from anchor: NSFileProviderSyncAnchor) {
         guard container == .workingSet else {
-            observer.finishEnumeratingWithError(NSFileProviderError(.syncAnchorExpired))
+            if anchor == Self.folderAnchor {
+                observer.finishEnumeratingChanges(upTo: Self.folderAnchor, moreComing: false)
+            } else {
+                observer.finishEnumeratingWithError(NSFileProviderError(.syncAnchorExpired))
+            }
             return
         }
         Task {
@@ -324,11 +337,13 @@ final class NASEnumerator: NSObject, NSFileProviderEnumerator {
 
     func currentSyncAnchor(completionHandler: @escaping (NSFileProviderSyncAnchor?) -> Void) {
         guard container == .workingSet else {
-            completionHandler(NSFileProviderSyncAnchor(Data(String(Date().timeIntervalSince1970).utf8)))
+            completionHandler(Self.folderAnchor)
             return
         }
         Task { completionHandler(Self.anchor(await snapshots.generation)) }
     }
+
+    private static let folderAnchor = NSFileProviderSyncAnchor(Data("folder-1".utf8))
 
     private static func anchor(_ generation: Int) -> NSFileProviderSyncAnchor {
         NSFileProviderSyncAnchor(Data("ws-\(generation)".utf8))
@@ -370,11 +385,21 @@ actor FolderSnapshots {
         try? JSONEncoder().encode(listings).write(to: file, options: .atomic)
     }
 
-    /// 파일 앱이 목록 전체를 읽어 갔을 때 그 목록을 기억
-    func store(_ id: String, _ entries: [[URLResourceKey: any Sendable]]) {
-        listings[id] = Self.listing(entries)
+    /// 파일 앱이 목록 전체를 읽어 갔을 때 그 목록을 기억.
+    /// 지난 목록에 있던 것이 없어졌으면 working set 으로 지우기를 모아 두고 true (목록 읽기만으로는 지운 게 전해지지 않으니)
+    func store(_ id: String, _ entries: [[URLResourceKey: any Sendable]]) -> Bool {
+        let now = Self.listing(entries)
+        let gone = (listings[id] ?? [:]).keys.filter { now[$0] == nil }
+        listings[id] = now
         checkedAt[id] = Date()
         save()
+        for name in gone {
+            let childID = ItemPath.child(of: id, name: name)
+            pendingDeletes.insert(childID)
+            pendingUpdates[childID] = nil
+        }
+        if !gone.isEmpty { generation += 1 }
+        return !gone.isEmpty
     }
 
     /// 폴더를 열 때 NAS 를 다시 읽어 달라진 것을 모아 둔다. 모은 게 있으면 true.
