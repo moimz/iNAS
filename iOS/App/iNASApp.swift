@@ -21,6 +21,10 @@ struct ServerListView: View {
     @State private var cacheSize: Int64?
     /// 썸네일을 못 만든 최근 기록
     @State private var failures = ThumbnailFailures.all()
+    /// 서버별 받아 둔 파일 크기 (서버 id → 바이트, 모르면 없음)
+    @State private var downloaded: [String: Int64] = [:]
+    /// 비우는 중인 서버 id
+    @State private var evicting: Set<String> = []
     @Environment(\.scenePhase) private var scenePhase
 
     private func serverName(_ id: String) -> String {
@@ -39,14 +43,36 @@ struct ServerListView: View {
                             .foregroundStyle(.primary)
                             .swipeActions {
                                 Button(role: .destructive) { remove(server) } label: { Label("삭제", systemImage: "trash") }
-                                Button { evict(server) } label: { Label("받은 파일 비우기", systemImage: "icloud.and.arrow.up") }
-                                    .tint(.orange)
                             }
                     }
                 } header: {
                     Text("서버")
                 } footer: {
-                    Text("파일 앱 › 둘러보기 › 위치에 서버마다 하나씩 나타납니다. 왼쪽으로 밀면 받아 둔 파일을 비우거나 서버를 지울 수 있습니다.")
+                    Text("파일 앱 › 둘러보기 › 위치에 서버마다 하나씩 나타납니다. 왼쪽으로 밀면 서버를 지울 수 있습니다.")
+                }
+
+                if !servers.isEmpty {
+                    Section {
+                        ForEach(servers) { server in
+                            HStack {
+                                Text(server.name)
+                                Spacer()
+                                if evicting.contains(server.id) {
+                                    ProgressView()
+                                } else {
+                                    Text(downloaded[server.id].map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "…")
+                                        .foregroundStyle(.secondary)
+                                    Button("비우기", role: .destructive) { evict(server) }
+                                        .buttonStyle(.borderless)
+                                        .disabled((downloaded[server.id] ?? 0) == 0)
+                                }
+                            }
+                        }
+                    } header: {
+                        Text("받아 둔 파일")
+                    } footer: {
+                        Text("파일 앱에서 받아 두어 구름 표시가 없는 파일입니다. 비우면 다시 구름 표시가 되고 NAS 원본은 그대로이며, 열 때 다시 받습니다. 공간이 부족하면 아이폰이 알아서 비우기도 합니다.")
+                    }
                 }
 
                 Section {
@@ -99,11 +125,13 @@ struct ServerListView: View {
             .task {
                 await syncDomains()
                 cacheSize = ThumbnailCache.size()
+                await refreshDownloaded()
             }
             .onChange(of: scenePhase) { _, phase in
                 guard phase == .active else { return }
                 cacheSize = ThumbnailCache.size()
                 failures = ThumbnailFailures.all()
+                Task { await refreshDownloaded() }
             }
             .alert(message ?? "", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
                 Button("확인", role: .cancel) {}
@@ -142,11 +170,18 @@ struct ServerListView: View {
 
     /// 이 서버에서 받아 둔 파일을 모두 비운다 (목록은 그대로, 다시 열면 다시 받음)
     private func evict(_ server: NASServer) {
-        guard let manager = NSFileProviderManager(for: server.domain) else { return }
-        manager.evictItem(identifier: .rootContainer) { error in
-            Task { @MainActor in
-                if let error { message = "받은 파일을 비우지 못했습니다: \(error.localizedDescription)" }
-            }
+        evicting.insert(server.id)
+        Task {
+            let failed = await DownloadedFiles.evictAll(in: server.domain)
+            evicting.remove(server.id)
+            if failed > 0 { message = "받은 파일 \(failed)개를 비우지 못했습니다. (열려 있거나 아직 NAS 에 올리는 중인 파일)" }
+            await refreshDownloaded()
+        }
+    }
+
+    private func refreshDownloaded() async {
+        for server in servers {
+            if let size = await DownloadedFiles.size(of: server.domain) { downloaded[server.id] = size }
         }
     }
 
@@ -400,5 +435,69 @@ extension NASServer {
     /// 목록에 보일 "아이디@주소:포트"
     var loginAddress: String {
         username.isEmpty ? address : "\(username)@\(address)"
+    }
+}
+
+/// 받아 둔(구름 표시가 없는) 파일 크기. 시스템이 기억하는 "내려받은 항목" 목록에서 파일 크기를 더한다
+/// (폴더를 직접 훑으면 받지 않은 NAS 폴더까지 읽게 되어서).
+enum DownloadedFiles {
+    static func size(of domain: NSFileProviderDomain) async -> Int64? {
+        await files(of: domain)?.reduce(0) { $0 + $1.size }
+    }
+
+    /// 바뀜 (2026-11-26): 위치 맨 위를 통째로 비우면(evictItem rootContainer) "작업이 허용되지 않음" 으로 실패했다
+    /// → 받아 둔 파일을 하나씩 비운다. 실패한 개수를 돌려준다.
+    static func evictAll(in domain: NSFileProviderDomain) async -> Int {
+        guard let manager = NSFileProviderManager(for: domain), let files = await files(of: domain) else { return 0 }
+        var failed = 0
+        for file in files {
+            do { try await manager.evictItem(identifier: file.id) } catch { failed += 1 }
+        }
+        return failed
+    }
+
+    /// 받아 둔 파일들 (식별자, 디스크에서 차지하는 크기)
+    private static func files(of domain: NSFileProviderDomain) async -> [(id: NSFileProviderItemIdentifier, size: Int64)]? {
+        guard let manager = NSFileProviderManager(for: domain) else { return nil }
+        let enumerator = manager.enumeratorForMaterializedItems()
+        defer { enumerator.invalidate() }
+        var files: [(id: NSFileProviderItemIdentifier, size: Int64)] = []
+        var page = NSFileProviderPage(Data())
+        while true {
+            let observer = PageObserver()
+            let result = await withCheckedContinuation { continuation in
+                observer.done = { continuation.resume(returning: $0) }
+                enumerator.enumerateItems(for: observer, startingAt: page)
+            }
+            guard let (items, next) = result else { return nil }
+            // 이 목록의 항목엔 크기가 없다 → 디스크에 받아 둔 실제 파일에서 읽는다
+            for item in items where !(item.contentType?.conforms(to: .folder) ?? false) {
+                guard let url = try? await manager.getUserVisibleURL(for: item.itemIdentifier) else { continue }
+                let access = url.startAccessingSecurityScopedResource()
+                defer { if access { url.stopAccessingSecurityScopedResource() } }
+                let values = try? url.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileSizeKey])
+                let size = values?.totalFileAllocatedSize ?? values?.fileSize ?? 0
+                files.append((item.itemIdentifier, Int64(size)))
+            }
+            guard let next else { return files }
+            page = next
+        }
+    }
+
+    private final class PageObserver: NSObject, NSFileProviderEnumerationObserver, @unchecked Sendable {
+        var items: [NSFileProviderItem] = []
+        var done: (([NSFileProviderItem], NSFileProviderPage?)?) -> Void = { _ in }
+
+        func didEnumerate(_ updatedItems: [NSFileProviderItemProtocol]) {
+            items.append(contentsOf: updatedItems)
+        }
+
+        func finishEnumerating(upTo nextPage: NSFileProviderPage?) {
+            done((items, nextPage))
+        }
+
+        func finishEnumeratingWithError(_ error: Error) {
+            done(nil)
+        }
     }
 }
