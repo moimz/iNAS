@@ -75,7 +75,8 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             completionHandler(NASItem.root(name: domain.displayName), nil)
             return Progress()
         }
-        if ItemPath.isLegacyMarked(identifier.rawValue) {
+        // 휴지통은 지원하지 않는다 (예전엔 "NSFileProviderTrashContainerItemIdentifier" 를 공유 이름으로 보고 폴더를 돌려줬다)
+        if identifier == .trashContainer || ItemPath.isLegacyMarked(identifier.rawValue) {
             completionHandler(nil, NSFileProviderError(.noSuchItem))
             return Progress()
         }
@@ -109,12 +110,17 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                 let attributes = try await manager.attributesOfItem(atPath: path)
                 // 바뀜 (2026-11-25): 첫 진행 알림(약 1MB)을 기다리지 않고 크기부터 알려 원형 진행이 바로 0% 로 뜨게
                 progress.totalUnitCount = max((attributes[.fileSizeKey] as? NSNumber)?.int64Value ?? 1, 1)
-                // 디스크로 바로 흘려 받는다 (약 1MB 마다 진행 알림, 파일 전체를 메모리에 올리지 않음)
-                try await manager.downloadItem(atPath: path, to: url) { bytes, total in
-                    progress.totalUnitCount = max(total, 1)
-                    progress.completedUnitCount = bytes
+                // 디스크로 바로 흘려 받는다 (약 1MB 마다 콜백, 파일 전체를 메모리에 올리지 않음)
+                // 바뀜 (2026-11-26, 사용자: 받는 동안 목록 스크롤이 계속 튐): 콜백마다 totalUnitCount 를 다시 넣고
+                // 1MB 마다 completedUnitCount 를 바꿔, 파일 앱이 진행 관찰을 1초에 몇 번씩 떼었다 붙이며 칸을 다시 그렸다
+                // (sysdiagnose "[Operation Progress] ADD/REMOVE" 분당 100~175번). 전체 크기는 위에서 한 번만 정하고,
+                // 받은 양은 0.5초 또는 1% 마다만 알린다.
+                let gate = ProgressGate(total: progress.totalUnitCount)
+                try await manager.downloadItem(atPath: path, to: url) { bytes, _ in
+                    if gate.shouldReport(bytes) { progress.completedUnitCount = bytes }
                     return !progress.isCancelled
                 }
+                progress.completedUnitCount = progress.totalUnitCount
                 completionHandler(url, NASItem(path: itemIdentifier.rawValue, attributes: attributes), nil)
             } catch {
                 try? FileManager.default.removeItem(at: url)
@@ -218,7 +224,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     }
 
     func enumerator(for containerItemIdentifier: NSFileProviderItemIdentifier, request: NSFileProviderRequest) throws -> NSFileProviderEnumerator {
-        if ItemPath.isLegacyMarked(containerItemIdentifier.rawValue) {
+        if containerItemIdentifier == .trashContainer || ItemPath.isLegacyMarked(containerItemIdentifier.rawValue) {
             throw NSFileProviderError(.noSuchItem)
         }
         return NASEnumerator(container: containerItemIdentifier, shares: server?.shares ?? [], smb: smb,
@@ -940,5 +946,26 @@ enum ThumbnailRecovery {
                 }
             }
         }
+    }
+}
+
+/// 진행 알림을 너무 자주 보내지 않게 (0.5초 또는 1% 마다)
+final class ProgressGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private let step: Int64
+    private var lastBytes: Int64 = 0
+    private var lastTime = Date.distantPast
+
+    init(total: Int64) {
+        step = max(total / 100, 1)
+    }
+
+    func shouldReport(_ bytes: Int64) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        let now = Date()
+        guard bytes - lastBytes >= step || now.timeIntervalSince(lastTime) >= 0.5 else { return false }
+        lastBytes = bytes
+        lastTime = now
+        return true
     }
 }

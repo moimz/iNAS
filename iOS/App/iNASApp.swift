@@ -154,6 +154,7 @@ struct ServerListView: View {
     private func syncDomains() async {
         await Self.removeLegacyLock(servers)
         await Self.reregisterForNFDFilenames(servers)
+        await Self.reregister(servers, once: "noTrash")
         let ids = Set(servers.map(\.id))
         let domains = (try? await NSFileProviderManager.domains()) ?? []
         for domain in domains where !ids.contains(domain.identifier.rawValue) {
@@ -169,6 +170,16 @@ struct ServerListView: View {
     /// 위치를 지웠다 다시 등록한다 (지울 때 시스템이 받아 둔 파일도 함께 지운다, 다시 열면 다시 받음)
     private static func reregisterForNFDFilenames(_ servers: [NASServer]) async {
         let key = "nfdFilenames"
+        guard !Shared.defaults.bool(forKey: key) else { return }
+        for server in servers {
+            try? await NSFileProviderManager.remove(server.domain)
+            try? await NSFileProviderManager.add(server.domain)
+        }
+        Shared.defaults.set(true, forKey: key)
+    }
+
+    /// 위치 설정(휴지통 등)을 바꾼 뒤 한 번: 위치를 지웠다 다시 등록해 새 설정이 들어가게 한다
+    private static func reregister(_ servers: [NASServer], once key: String) async {
         guard !Shared.defaults.bool(forKey: key) else { return }
         for server in servers {
             try? await NSFileProviderManager.remove(server.domain)
@@ -375,7 +386,11 @@ struct SMBBrowser {
 
 extension NASServer {
     var domain: NSFileProviderDomain {
-        NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(id), displayName: name)
+        let domain = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(id), displayName: name)
+        // 바뀜 (2026-11-26): 휴지통은 만들지 않았다 (지우면 NAS 에서 바로 지움). 기본값(지원함)이면 파일 앱이
+        // 1초마다 iNAS 휴지통을 찾다 "지원되지 않는 기능" 오류를 내고, 그때마다 받는 중 진행 표시를 다시 붙였다.
+        domain.supportsSyncingTrash = false
+        return domain
     }
 
     var address: String {
