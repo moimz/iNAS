@@ -48,7 +48,6 @@ struct INASApp: App {
         }
         .windowResizability(.contentSize)
         .windowStyle(.hiddenTitleBar)
-        .restorationBehavior(.disabled)
         .defaultPosition(.center)
 
         // iNAS 설정 (⌘,): 업데이트
