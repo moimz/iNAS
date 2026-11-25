@@ -93,11 +93,14 @@ struct ServerListView: View {
                 } footer: {
                     Text("썸네일을 만들지 못한 최근 \(ThumbnailFailures.limit)개입니다.")
                 }
+
+                // 버전은 화면 아래에 고정하지 않고 목록 맨 끝에 (사용자 2026-11-26)
+                Section {
+                } footer: {
+                    Text(Self.versionText).font(.caption2).foregroundStyle(.tertiary).frame(maxWidth: .infinity)
+                }
             }
             .navigationTitle("iNAS")
-            .safeAreaInset(edge: .bottom) {
-                Text(Self.versionText).font(.caption2).foregroundStyle(.tertiary).padding(.bottom, 4)
-            }
             .toolbar {
                 Button { editing = NASServer() } label: { Image(systemName: "plus") }
             }
