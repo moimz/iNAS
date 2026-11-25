@@ -153,6 +153,7 @@ struct ServerListView: View {
     /// 서버 목록과 파일 앱 위치를 맞춘다: 목록에 없는 위치는 지우고, 빠진 서버는 등록한다
     private func syncDomains() async {
         await Self.removeLegacyLock(servers)
+        await Self.reregisterForNFDFilenames(servers)
         let ids = Set(servers.map(\.id))
         let domains = (try? await NSFileProviderManager.domains()) ?? []
         for domain in domains where !ids.contains(domain.identifier.rawValue) {
@@ -162,6 +163,18 @@ struct ServerListView: View {
         for server in servers where !registered.contains(server.id) {
             try? await NSFileProviderManager.add(server.domain)
         }
+    }
+
+    /// 파일 앱 이름을 NFD 로 바꾼 뒤 한 번 (2026-11-25): 이미 디스크에 NFC 이름으로 받아 둔 파일·폴더가 남지 않게
+    /// 위치를 지웠다 다시 등록한다 (지울 때 시스템이 받아 둔 파일도 함께 지운다, 다시 열면 다시 받음)
+    private static func reregisterForNFDFilenames(_ servers: [NASServer]) async {
+        let key = "nfdFilenames"
+        guard !Shared.defaults.bool(forKey: key) else { return }
+        for server in servers {
+            try? await NSFileProviderManager.remove(server.domain)
+            try? await NSFileProviderManager.add(server.domain)
+        }
+        Shared.defaults.set(true, forKey: key)
     }
 
     /// 잠금 기능을 뺀 뒤 한 번: 예전에 잠금 폴더가 있던 서버는 파일 앱 위치를 지웠다 다시 등록해
