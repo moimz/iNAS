@@ -52,14 +52,8 @@ struct UpdateMenuButton: View {
 struct SettingsView: View {
     @Bindable private var updater = Updater.shared
 
-    private var version: String {
-        let info = Bundle.main.infoDictionary
-        let short = info?["CFBundleShortVersionString"] as? String ?? "?"
-        let build = info?["CFBundleVersion"] as? String ?? "?"
-        // "2.3.1 (빌드 41 · abc1234)" — 뒤는 빌드한 커밋 (Scripts/stamp-commit.sh)
-        let commit = info?["INASCommit"] as? String
-        return "\(short) (빌드 \(build)\(commit.map { " · \($0)" } ?? ""))"
-    }
+    /// "2.3.1 (빌드 41 · abc1234)" — 정보 창과 같은 글
+    private var version: String { AboutView.versionText }
 
     var body: some View {
         Form {

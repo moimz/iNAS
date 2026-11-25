@@ -519,7 +519,6 @@
 				INFOPLIST_FILE = "iNAS-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = iNAS;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2026 Arzz";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "같은 네트워크에 있는 NAS의 SMB 공유에 연결하려면 로컬 네트워크 접근이 필요합니다.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -549,7 +548,6 @@
 				INFOPLIST_FILE = "iNAS-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = iNAS;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2026 Arzz";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "같은 네트워크에 있는 NAS의 SMB 공유에 연결하려면 로컬 네트워크 접근이 필요합니다.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

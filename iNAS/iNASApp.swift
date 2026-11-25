@@ -34,13 +34,22 @@ struct INASApp: App {
         }
         .windowResizability(.contentMinSize)
         .commands {
-            // iNAS에 관하여: 기본 정보 창 그대로, 버전 줄만 "버전 2.3.1 (빌드 41 · 8f25225)" 으로 (Ai.md 앱 안의 버전 표시)
+            // iNAS에 관하여: 기본 정보 창 대신 직접 만든 창 (AboutView, iSQL 과 같은 모양), 그 아래 업데이트 확인
             CommandGroup(replacing: .appInfo) {
-                Button("iNAS에 관하여") { AboutPanel.show() }
+                AboutMenuButton()
                 UpdateMenuButton()
             }
             CommandGroup(replacing: .newItem) {}
         }
+
+        // iNAS 정보 창
+        Window("iNAS 정보", id: AboutView.windowID) {
+            AboutView()
+        }
+        .windowResizability(.contentSize)
+        .windowStyle(.hiddenTitleBar)
+        .restorationBehavior(.disabled)
+        .defaultPosition(.center)
 
         // iNAS 설정 (⌘,): 업데이트
         Settings {
@@ -79,21 +88,5 @@ enum HeadlessRunner {
             exit(0)
         }
         dispatchMain()
-    }
-}
-
-/// 기본 "이 앱에 관하여" 창. 버전 줄을 "2.3.1 (빌드 41 · 8f25225)" 로 넘긴다.
-enum AboutPanel {
-    static func show() {
-        let info = Bundle.main.infoDictionary
-        let build = info?["CFBundleVersion"] as? String ?? "?"
-        let commit = info?["INASCommit"] as? String
-        NSApp.activate(ignoringOtherApps: true)
-        let short = info?["CFBundleShortVersionString"] as? String ?? "?"
-        // 기본 모양 "버전 2.3.1(빌드 …)" 은 괄호 앞 띄어쓰기가 없어, 버전 줄을 통째로 넘기고 괄호 칸(version)은 비운다
-        NSApp.orderFrontStandardAboutPanel(options: [
-            .applicationVersion: "\(short) (빌드 \(build)\(commit.map { " · \($0)" } ?? ""))",
-            .version: "",
-        ])
     }
 }

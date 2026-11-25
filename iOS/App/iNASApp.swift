@@ -94,6 +94,20 @@ struct ServerListView: View {
                     Text("썸네일을 만들지 못한 최근 \(ThumbnailFailures.limit)개입니다.")
                 }
 
+                // 오픈소스 고지 (LGPL 라이브러리를 앱에 넣어 배포하므로 이름·라이선스·출처를 밝힌다)
+                Section {
+                    Link(destination: URL(string: "https://github.com/amosavian/AMSMB2")!) {
+                        LabeledContent("AMSMB2 · libsmb2", value: "LGPL-2.1")
+                    }
+                    Link(destination: URL(string: "https://ffmpeg.org")!) {
+                        LabeledContent("FFmpeg 8.0", value: "LGPL-2.1")
+                    }
+                } header: {
+                    Text("오픈소스")
+                } footer: {
+                    Text("NAS 연결(SMB)에 AMSMB2 · libsmb2 를, 동영상 썸네일에 FFmpeg(디코더만)를 씁니다. 누르면 각 프로젝트 페이지가 열리고 소스와 라이선스 전문을 받을 수 있습니다. iNAS 에 넣은 FFmpeg 는 iNAS 저장소의 Scripts/build-ffmpeg-ios.sh 로 똑같이 다시 만들 수 있습니다.")
+                }
+
                 // 버전은 화면 아래에 고정하지 않고 목록 맨 끝에 (사용자 2026-11-26)
                 Section {
                 } footer: {
