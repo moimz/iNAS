@@ -14,6 +14,7 @@
 		B20000000000000000000063 /* AMSMB2 in Frameworks */ = {isa = PBXBuildFile; productRef = B20000000000000000000061 /* AMSMB2 */; };
 		B20000000000000000000064 /* AMSMB2 in Embed Frameworks */ = {isa = PBXBuildFile; productRef = B20000000000000000000061 /* AMSMB2 */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		B20000000000000000000065 /* AMSMB2 in Frameworks */ = {isa = PBXBuildFile; productRef = B20000000000000000000062 /* AMSMB2 */; };
+		B20000000000000000000091 /* FFmpeg.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = B20000000000000000000090 /* FFmpeg.xcframework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -71,6 +72,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		B20000000000000000000090 /* FFmpeg.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = Vendor/FFmpeg.xcframework; sourceTree = "<group>"; };
 		A10000000000000000000002 /* com.moimz.iNAS.agent.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = com.moimz.iNAS.agent.plist; sourceTree = "<group>"; };
 		A10000000000000000000004 /* iNAS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = iNAS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B20000000000000000000020 /* iNAS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = iNAS.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -128,6 +130,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				B20000000000000000000065 /* AMSMB2 in Frameworks */,
+				B20000000000000000000091 /* FFmpeg.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -147,6 +150,7 @@
 				A10000000000000000000005 /* iNAS */,
 				A10000000000000000000008 /* Support */,
 				B20000000000000000000034 /* iOS */,
+				B20000000000000000000090 /* FFmpeg.xcframework */,
 				A10000000000000000000009 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -473,7 +477,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 2.1;
+				MARKETING_VERSION = 2.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.moimz.iNAS;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -502,7 +506,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 2.1;
+				MARKETING_VERSION = 2.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.moimz.iNAS;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -520,12 +524,11 @@
 				DEVELOPMENT_TEAM = XSDBV8D2XL;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = iNAS;
-				INFOPLIST_KEY_NSFaceIDUsageDescription = "잠금 폴더를 열 때 Face ID 로 확인합니다.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "같은 네트워크에 있는 NAS 의 SMB 공유에 연결합니다.";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", );
-				MARKETING_VERSION = 2.1;
+				MARKETING_VERSION = 2.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.moimz.iNAS;
 				PRODUCT_NAME = iNAS;
 				SDKROOT = iphoneos;
@@ -545,12 +548,11 @@
 				DEVELOPMENT_TEAM = XSDBV8D2XL;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = iNAS;
-				INFOPLIST_KEY_NSFaceIDUsageDescription = "잠금 폴더를 열 때 Face ID 로 확인합니다.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "같은 네트워크에 있는 NAS 의 SMB 공유에 연결합니다.";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", );
-				MARKETING_VERSION = 2.1;
+				MARKETING_VERSION = 2.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.moimz.iNAS;
 				PRODUCT_NAME = iNAS;
 				SDKROOT = iphoneos;
@@ -573,7 +575,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = iNAS;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", );
-				MARKETING_VERSION = 2.1;
+				MARKETING_VERSION = 2.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.moimz.iNAS.FileProvider;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -597,7 +599,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = iNAS;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", );
-				MARKETING_VERSION = 2.1;
+				MARKETING_VERSION = 2.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.moimz.iNAS.FileProvider;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -619,10 +621,9 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "iOS/FileProviderUI-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = iNAS;
-				INFOPLIST_KEY_NSFaceIDUsageDescription = "잠금 폴더를 열 때 Face ID 로 확인합니다.";
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", );
-				MARKETING_VERSION = 2.1;
+				MARKETING_VERSION = 2.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.moimz.iNAS.FileProviderUI;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -644,10 +645,9 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "iOS/FileProviderUI-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = iNAS;
-				INFOPLIST_KEY_NSFaceIDUsageDescription = "잠금 폴더를 열 때 Face ID 로 확인합니다.";
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", );
-				MARKETING_VERSION = 2.1;
+				MARKETING_VERSION = 2.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.moimz.iNAS.FileProviderUI;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;

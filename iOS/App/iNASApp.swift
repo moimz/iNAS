@@ -1,6 +1,5 @@
 import AMSMB2
 import FileProvider
-import LocalAuthentication
 import SwiftUI
 
 /// iNAS 아이폰·아이패드 앱: NAS 서버를 등록하면 서버마다 파일 앱 "위치"가 하나씩 생긴다.
@@ -17,9 +16,16 @@ struct INASApp: App {
 struct ServerListView: View {
     @State private var servers = ServerStore.all()
     @State private var editing: NASServer?
-    @State private var lockMinutes = Shared.lockMinutes
     @State private var message: String?
+    /// 썸네일 캐시 크기 (바이트, 모르면 nil)
+    @State private var cacheSize: Int64?
+    /// 썸네일을 못 만든 최근 기록
+    @State private var failures = ThumbnailFailures.all()
     @Environment(\.scenePhase) private var scenePhase
+
+    private func serverName(_ id: String) -> String {
+        servers.first { $0.id == id }?.name ?? "지운 서버"
+    }
 
     var body: some View {
         NavigationStack {
@@ -44,17 +50,38 @@ struct ServerListView: View {
                 }
 
                 Section {
-                    Picker("잠금 유지 시간", selection: $lockMinutes) {
-                        Text("없음 (매번 확인)").tag(0)
-                        ForEach([1, 5, 15, 30, 60], id: \.self) { Text("\($0)분").tag($0) }
+                    LabeledContent("썸네일 캐시", value: cacheSize.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "…")
+                    Button("캐시 지우기", role: .destructive) {
+                        ThumbnailCache.clear()
+                        cacheSize = ThumbnailCache.size()
                     }
-                    .onChange(of: lockMinutes) { _, value in Shared.lockMinutes = value }
-                } header: {
-                    Text("잠금 폴더")
+                    .disabled(cacheSize == 0)
                 } footer: {
-                    Text(lockMinutes == 0
-                         ? "잠금 폴더는 들어갈 때마다 Face ID 로 확인합니다."
-                         : "잠금 폴더는 Face ID 로 열고, 마지막으로 쓴 뒤 이 시간이 지나면 다시 잠깁니다.")
+                    Text("파일 앱에 보이는 사진·동영상 썸네일을 iNAS 가 만들어 둔 것입니다. 지우면 다음에 볼 때 다시 만듭니다. (파일 앱이 따로 기억해 둔 썸네일은 남을 수 있습니다)")
+                }
+
+                Section {
+                    if failures.isEmpty {
+                        Text("없음").foregroundStyle(.secondary)
+                    }
+                    ForEach(failures) { failure in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(failure.name).lineLimit(1).truncationMode(.middle)
+                            Text(failure.reason).font(.caption).foregroundStyle(.secondary)
+                            Text("\(serverName(failure.serverID)) · \((failure.path as NSString).deletingLastPathComponent) · \(failure.date.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.caption2).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
+                        }
+                    }
+                    if !failures.isEmpty {
+                        Button("기록 지우기", role: .destructive) {
+                            ThumbnailFailures.clear()
+                            failures = []
+                        }
+                    }
+                } header: {
+                    Text("썸네일 실패 기록")
+                } footer: {
+                    Text("썸네일을 만들지 못한 최근 \(ThumbnailFailures.limit)개입니다.")
                 }
             }
             .navigationTitle("iNAS")
@@ -69,9 +96,14 @@ struct ServerListView: View {
                     save(saved, password: password)
                 }
             }
-            .task { await syncDomains() }
+            .task {
+                await syncDomains()
+                cacheSize = ThumbnailCache.size()
+            }
             .onChange(of: scenePhase) { _, phase in
-                if phase == .active { unlockIfRequested() }
+                guard phase == .active else { return }
+                cacheSize = ThumbnailCache.size()
+                failures = ThumbnailFailures.all()
             }
             .alert(message ?? "", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
                 Button("확인", role: .cancel) {}
@@ -84,27 +116,10 @@ struct ServerListView: View {
         return "버전 \(info?["CFBundleShortVersionString"] as? String ?? "?") (\(info?["CFBundleVersion"] as? String ?? "?"))"
     }
 
-    /// 파일 앱이 잠금 폴더에서 "인증 필요 › iNAS 열기" 로 앱을 열었으면 바로 Face ID 를 묻고,
-    /// 통과하면 열어 두고 파일 앱에 "해결됨" 을 알려 폴더를 다시 읽게 한다
-    private func unlockIfRequested() {
-        let waiting = servers.filter { LockState.takeRecentRequest($0.id) }
-        guard !waiting.isEmpty else { return }
-        let context = LAContext()
-        context.touchIDAuthenticationAllowableReuseDuration = 0
-        context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "잠금 폴더를 엽니다") { ok, _ in
-            guard ok else { return }
-            for server in waiting {
-                LockState.unlock(server.id)
-                NSFileProviderManager(for: server.domain)?.signalErrorResolved(NSFileProviderError(.notAuthenticated)) { _ in }
-            }
-        }
-    }
-
     private func save(_ server: NASServer, password: String?) {
         if let index = servers.firstIndex(where: { $0.id == server.id }) { servers[index] = server } else { servers.append(server) }
         ServerStore.save(servers)
         if let password { PasswordStore.set(password, for: server.id) }
-        LockState.lock(server.id)
         // 이름·공유가 바뀌었을 수 있어 위치를 지우고 다시 등록한다
         let domain = server.domain
         NSFileProviderManager.remove(domain) { _ in
@@ -120,7 +135,8 @@ struct ServerListView: View {
         servers.removeAll { $0.id == server.id }
         ServerStore.save(servers)
         PasswordStore.delete(for: server.id)
-        LockState.lock(server.id)
+        ThumbnailFailures.clear(serverID: server.id)
+        ThumbnailCache.clear(serverID: server.id)
         NSFileProviderManager.remove(server.domain) { _ in }
     }
 
@@ -136,6 +152,7 @@ struct ServerListView: View {
 
     /// 서버 목록과 파일 앱 위치를 맞춘다: 목록에 없는 위치는 지우고, 빠진 서버는 등록한다
     private func syncDomains() async {
+        await Self.removeLegacyLock(servers)
         let ids = Set(servers.map(\.id))
         let domains = (try? await NSFileProviderManager.domains()) ?? []
         for domain in domains where !ids.contains(domain.identifier.rawValue) {
@@ -145,6 +162,29 @@ struct ServerListView: View {
         for server in servers where !registered.contains(server.id) {
             try? await NSFileProviderManager.add(server.domain)
         }
+    }
+
+    /// 잠금 기능을 뺀 뒤 한 번: 예전에 잠금 폴더가 있던 서버는 파일 앱 위치를 지웠다 다시 등록해
+    /// 번호 붙은 잠금 폴더 식별자("Book|3")가 남지 않게 하고, 잠금 관련 설정을 지운다
+    private static func removeLegacyLock(_ servers: [NASServer]) async {
+        let defaults = Shared.defaults
+        guard !defaults.bool(forKey: "lockRemoved") else { return }
+        let raw = defaults.data(forKey: "servers").flatMap { try? JSONSerialization.jsonObject(with: $0) as? [[String: Any]] } ?? []
+        let hadLocks = Set(raw.compactMap { entry -> String? in
+            guard let id = entry["id"] as? String, let locked = entry["locked"] as? [String], !locked.isEmpty else { return nil }
+            return id
+        })
+        for server in servers where hadLocks.contains(server.id) {
+            try? await NSFileProviderManager.remove(server.domain)
+            try? await NSFileProviderManager.add(server.domain)
+        }
+        for server in servers {
+            for key in ["lockEpoch", "unlockedUntil", "authRequested", "askedFolder"] { defaults.removeObject(forKey: "\(key).\(server.id)") }
+        }
+        defaults.removeObject(forKey: "lockMinutes")
+        PasswordStore.delete(for: "lockPIN")
+        ServerStore.save(servers)   // 저장하면서 JSON 의 "locked" 가 빠진다
+        defaults.set(true, forKey: "lockRemoved")
     }
 }
 
@@ -183,7 +223,6 @@ struct ServerEditor: View {
     @State private var available: [String] = []
     @State private var loading = false
     @State private var status: String?
-    @State private var pickingFolder = false
 
     private var hasSavedPassword: Bool { PasswordStore.password(for: server.id) != nil }
 
@@ -226,18 +265,6 @@ struct ServerEditor: View {
                     Text(status ?? "켠 공유만 파일 앱에 폴더로 보입니다.")
                 }
 
-                Section {
-                    ForEach(server.locked, id: \.self) { path in
-                        Label(path, systemImage: "lock.fill")
-                    }
-                    .onDelete { server.locked.remove(atOffsets: $0) }
-                    Button("잠글 폴더 고르기…") { pickingFolder = true }
-                        .disabled(server.shares.isEmpty || server.host.isEmpty)
-                } header: {
-                    Text("잠금 폴더 (Face ID)")
-                } footer: {
-                    Text("고른 폴더와 그 안쪽은 Face ID 로 열고, \(Shared.lockMinutes)분 동안 쓰지 않으면 다시 잠깁니다. 왼쪽으로 밀면 잠금을 풉니다.")
-                }
             }
             .navigationTitle(isNew ? "새 서버" : server.name)
             .navigationBarTitleDisplayMode(.inline)
@@ -250,11 +277,6 @@ struct ServerEditor: View {
                         dismiss()
                     }
                     .disabled(server.name.trimmingCharacters(in: .whitespaces).isEmpty || server.host.isEmpty || server.shares.isEmpty)
-                }
-            }
-            .sheet(isPresented: $pickingFolder) {
-                FolderPicker(client: client(), shares: server.shares) { path in
-                    if !server.locked.contains(path) { server.locked.append(path) }
                 }
             }
             .onAppear { portText = server.port.map(String.init) ?? "" }
@@ -276,7 +298,6 @@ struct ServerEditor: View {
                     server.shares.append(share)
                 } else {
                     server.shares.removeAll { $0 == share }
-                    server.locked.removeAll { $0 == share || $0.hasPrefix(share + "/") }
                 }
             }
         )
@@ -306,67 +327,7 @@ struct ServerEditor: View {
     }
 }
 
-// MARK: - 잠글 폴더 고르기
-
-private struct FolderPicker: View {
-    let client: SMBBrowser
-    let shares: [String]
-    let onPick: (String) -> Void
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            List(shares, id: \.self) { share in
-                NavigationLink(value: share) { Label(share, systemImage: "folder") }
-            }
-            .navigationTitle("잠글 폴더")
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(for: String.self) { path in
-                FolderLevel(client: client, path: path) { picked in
-                    onPick(picked)
-                    dismiss()
-                }
-            }
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } }
-            }
-        }
-    }
-}
-
-private struct FolderLevel: View {
-    let client: SMBBrowser
-    let path: String
-    let onPick: (String) -> Void
-    @State private var folders: [String]?
-    @State private var error: String?
-
-    var body: some View {
-        List {
-            Section {
-                Button { onPick(path) } label: { Label("이 폴더 잠그기", systemImage: "lock.fill") }
-            }
-            Section {
-                if let folders {
-                    if folders.isEmpty { Text("하위 폴더 없음").foregroundStyle(.secondary) }
-                    ForEach(folders, id: \.self) { name in
-                        NavigationLink(value: path + "/" + name) { Label(name, systemImage: "folder") }
-                    }
-                } else if let error {
-                    Text(error).foregroundStyle(.red)
-                } else {
-                    ProgressView()
-                }
-            }
-        }
-        .navigationTitle((path as NSString).lastPathComponent)
-        .task {
-            do { folders = try await client.folders(in: path) } catch { self.error = SMBBrowser.describe(error) }
-        }
-    }
-}
-
-// MARK: - 앱에서 쓰는 SMB (공유 목록·폴더 고르기)
+// MARK: - 앱에서 쓰는 SMB (공유 목록)
 
 struct SMBBrowser {
     let host: String
@@ -390,21 +351,6 @@ struct SMBBrowser {
         try await manager().listShares().map(\.name).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
 
-    /// "공유/경로" 안의 하위 폴더 이름
-    func folders(in path: String) async throws -> [String] {
-        let parts = path.split(separator: "/").map(String.init)
-        let manager = try manager()
-        try await manager.connectShare(name: parts[0])
-        let entries = try await manager.contentsOfDirectory(atPath: "/" + parts.dropFirst().joined(separator: "/"))
-        return entries.compactMap { entry -> String? in
-            guard let name = entry[.nameKey] as? String, (entry[.isDirectoryKey] as? Bool) == true,
-                  !name.hasPrefix("."), !name.hasPrefix("@"), name != "#recycle" else { return nil }
-            return name
-        }
-        .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-    }
-
-    /// libsmb2 오류를 사람이 읽을 문장으로 (inPlayer 와 같은 판별)
     static func describe(_ error: Error) -> String {
         guard let posix = error as? POSIXError else { return error.localizedDescription }
         let text = posix.localizedDescription.uppercased()
