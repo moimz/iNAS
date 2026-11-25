@@ -97,7 +97,7 @@ struct ServerListView: View {
                 // 버전은 화면 아래에 고정하지 않고 목록 맨 끝에 (사용자 2026-11-26)
                 Section {
                 } footer: {
-                    Text(Self.versionText).font(.caption2).foregroundStyle(.tertiary).frame(maxWidth: .infinity)
+                    Text(Self.versionText).frame(maxWidth: .infinity)
                 }
             }
             .navigationTitle("iNAS")
