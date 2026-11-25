@@ -574,7 +574,10 @@ final class NASItem: NSObject, NSFileProviderItem {
          isFolder: Bool, size: Int64?, modified: Date?, isShare: Bool = false) {
         itemIdentifier = id
         parentItemIdentifier = parent
-        filename = name
+        // 바뀜 (2026-11-25, 사용자: iRayer 로 열기 안 됨): 파일 앱에 보이는 이름은 NFC 로. NAS 이름(대개 NFD)을 그대로 주면
+        // 아이폰이 디스크에는 NFC 로 만들고 파일 앱 경로는 NFD 로 들고 있어, 다른 앱에 넘길 때 샌드박스 정규 경로 검사가 실패한다
+        // (파일 앱 "다른 앱으로 열기"·공유가 조용히 안 됨, 진단 기록 canonical check failed). NAS 경로(itemIdentifier)는 원래 이름 그대로.
+        filename = ItemPath.nfc(name)
         contentType = isFolder ? .folder : (UTType(filenameExtension: (name as NSString).pathExtension) ?? .data)
         documentSize = isFolder ? nil : size.map { NSNumber(value: $0) }
         contentModificationDate = modified
@@ -586,7 +589,8 @@ final class NASItem: NSObject, NSFileProviderItem {
             capabilities = [.allowsReading, .allowsWriting, .allowsDeleting, .allowsRenaming, .allowsReparenting, .allowsEvicting]
         }
         let version = Data("\(size ?? 0)-\(modified?.timeIntervalSince1970 ?? 0)".utf8)
-        itemVersion = NSFileProviderItemVersion(contentVersion: version, metadataVersion: version)
+        // 바뀜 (2026-11-25): 이름을 NFC 로 바꿨으니 이미 받아 둔 항목도 새 이름으로 바뀌게 메타데이터 버전만 바꾼다 (내용은 다시 받지 않게 그대로)
+        itemVersion = NSFileProviderItemVersion(contentVersion: version, metadataVersion: Data("nfc-".utf8) + version)
         super.init()
     }
 
