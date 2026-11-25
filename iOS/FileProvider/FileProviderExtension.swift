@@ -170,9 +170,29 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                     completionHandler: @escaping (NSFileProviderItem?, NSFileProviderItemFields, Bool, Error?) -> Void) -> Progress {
         let progress = Progress(totalUnitCount: 1)
         let oldID = item.itemIdentifier.rawValue
-        // 파일 앱이 폴더를 열 때 고치는 마지막 사용 시각·태그 같은 정보는 NAS 에 둘 곳이 없으니 그냥 받는다
+        // 파일 앱이 고치는 마지막 사용 시각·태그 같은 정보는 NAS 에 둘 곳이 없으니 그냥 받는다.
+        // 바뀜 (2026-11-26, sysdiagnose: 받은 직후 lastUsedDate 만 바뀐 뒤 같은 파일을 한 번 더 받음):
+        // 받은 item 을 그대로 돌려주면 우리 버전이 빠져 시스템이 내용이 바뀐 것으로 보고 다시 받았다
+        // → NAS 에서 읽은 우리 항목(같은 버전)으로 답한다. 못 읽으면 예전처럼.
         if changedFields.isDisjoint(with: [.filename, .parentItemIdentifier, .contents]) {
-            completionHandler(item, [], false, nil)
+            let (share, path) = ItemPath.split(oldID)
+            if item.itemIdentifier == .rootContainer {
+                completionHandler(NASItem.root(name: domain.displayName), [], false, nil)
+                return progress
+            }
+            if path == "/" {
+                completionHandler(NASItem.folder(id: oldID, parent: .rootContainer, name: share,
+                                                 serverID: domain.identifier.rawValue), [], false, nil)
+                return progress
+            }
+            Task {
+                if let manager = try? await smb.manager(share: share),
+                   let attributes = try? await manager.attributesOfItem(atPath: path) {
+                    completionHandler(NASItem(path: oldID, attributes: attributes), [], false, nil)
+                } else {
+                    completionHandler(item, [], false, nil)
+                }
+            }
             return progress
         }
         let (share, oldPath) = ItemPath.split(oldID)
