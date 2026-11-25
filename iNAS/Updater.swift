@@ -53,7 +53,7 @@ struct SettingsView: View {
     @Bindable private var updater = Updater.shared
 
     /// "2.3.1 (빌드 41 · abc1234)" — 정보 창과 같은 글
-    private var version: String { AboutView.versionText }
+    private var version: String { AppVersion.text }
 
     var body: some View {
         Form {

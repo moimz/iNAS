@@ -34,21 +34,19 @@ struct INASApp: App {
         }
         .windowResizability(.contentMinSize)
         .commands {
-            // iNAS에 관하여: 기본 정보 창 대신 직접 만든 창 (AboutView, iSQL 과 같은 모양), 그 아래 업데이트 확인
+            // iNAS에 관하여: 기본 정보 창 그대로, 버전 줄만 Ai.md 모양 "2.3.1 (빌드 45 · 1231858)" (사용자 2026-11-26, iVNC 와 같게)
             CommandGroup(replacing: .appInfo) {
-                AboutMenuButton()
+                Button("iNAS에 관하여") {
+                    NSApp.orderFrontStandardAboutPanel(options: [
+                        .applicationVersion: AppVersion.text,
+                        .version: "",
+                    ])
+                    NSApp.activate(ignoringOtherApps: true)
+                }
                 UpdateMenuButton()
             }
             CommandGroup(replacing: .newItem) {}
         }
-
-        // iNAS 정보 창
-        Window("iNAS 정보", id: AboutView.windowID) {
-            AboutView()
-        }
-        .windowResizability(.contentSize)
-        .windowStyle(.hiddenTitleBar)
-        .defaultPosition(.center)
 
         // iNAS 설정 (⌘,): 업데이트
         Settings {
@@ -87,5 +85,16 @@ enum HeadlessRunner {
             exit(0)
         }
         dispatchMain()
+    }
+}
+
+/// "2.3.1 (빌드 45 · 1231858)" (Ai.md "앱 안의 버전 표시"). 해시는 빌드 단계 Scripts/stamp-commit.sh 가 INASCommit 에 넣는다
+enum AppVersion {
+    static var text: String {
+        let info = Bundle.main.infoDictionary
+        let v = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let b = info?["CFBundleVersion"] as? String ?? "?"
+        let c = (info?["INASCommit"] as? String).map { " · \($0)" } ?? ""
+        return "\(v) (빌드 \(b)\(c))"
     }
 }
