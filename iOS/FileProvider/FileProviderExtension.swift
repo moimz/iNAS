@@ -934,8 +934,10 @@ enum ThumbnailRecovery {
             markers.forEach { try? FileManager.default.removeItem(at: $0) }
             defaults?.set(build, forKey: "thumbnailBuild")
             // 문제 찾을 때 남기던 기록 파일 (이전 빌드)
-            if let old = ThumbnailCache.root?.deletingLastPathComponent().appendingPathComponent("thumbnail-trace.log") {
-                try? FileManager.default.removeItem(at: old)
+            for name in ["thumbnail-trace.log", "fp-trace.log"] {
+                if let old = ThumbnailCache.root?.deletingLastPathComponent().appendingPathComponent(name) {
+                    try? FileManager.default.removeItem(at: old)
+                }
             }
         }
     }
