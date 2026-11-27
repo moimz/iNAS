@@ -1,6 +1,7 @@
 import AppKit
 import CloudKit
 import Foundation
+import Network
 
 /// 같은 iCloud 계정의 기기에 기록한 "나는 누구, 어디서 기다림"
 struct SyncDevice: Identifiable, Codable, Equatable {
@@ -23,6 +24,8 @@ struct SyncDevice: Identifiable, Codable, Equatable {
     var updatedAt: Date
     /// 이 기기가 본 다른 기기(아이디)와의 연결. CloudKit 칸 이름은 reach (운영 스키마를 다시 안 올리려고 그대로 씀)
     var links: [String: SyncLinkInfo]
+    /// 동기화 공개 키(Curve25519, base64). 같은 iCloud 계정의 이 키를 가진 기기만 암호화 연결을 맺을 수 있다
+    var publicKey: String = ""
 }
 
 /// 한 기기와의 연결 상태
@@ -64,8 +67,6 @@ final class SyncDiscovery: ObservableObject {
     nonisolated static let zoneID = CKRecordZone.ID(zoneName: "Sync", ownerName: CKCurrentUserDefaultName)
     /// 이만큼 소식이 없으면 꺼진 기기로 본다 (iCloud 기록은 1분마다 올림)
     static let staleAfter: TimeInterval = 3 * 60
-    static let pingEvery: TimeInterval = 10
-    static let deadAfter: TimeInterval = 35
 
     @Published private(set) var me: SyncDevice
     @Published private(set) var peers: [SyncDevice] = []
@@ -75,8 +76,22 @@ final class SyncDiscovery: ObservableObject {
     @Published private(set) var iCloudOK = false
     @Published private(set) var busy = false
     @Published private(set) var log: [(Date, String)] = []
+    /// 폴더 아이디 → 동기화 상태 (엔진)
+    @Published private(set) var folderStatus: [String: SyncFolderStatus] = [:]
 
-    private let listener = SyncListener()
+    /// 이 Mac 의 키 (비밀 키는 키체인)
+    let identity: SyncIdentity
+    let engine: SyncEngine
+    private var listener: NWListener?
+    private var listenerPort: UInt16 = 0
+    private var listenerKeys: [String] = []
+    /// 엔진에 살아 있는 연결 (키 아이디 → 연결)
+    private var engineLinks: [String: SyncPeerLink] = [:]
+    /// 내가 붙은(붙는 중인) 키 아이디
+    private var outgoingKeys: Set<String> = []
+    private var dialingIDs: Set<String> = []
+    private var watchers: [String: SyncWatcher] = [:]
+    private var folderConfigs: [SyncFolderConfig] = []
     private var gateway: UPnPGateway?
     private var mappedExternal: UInt16?
     private var timers: [Timer] = []
@@ -90,18 +105,12 @@ final class SyncDiscovery: ObservableObject {
     private var lastSavedAt = Date.distantPast
     private lazy var database = CKContainer(identifier: Self.containerID).privateCloudDatabase
 
-    /// 기기 아이디 → 살아 있는 연결 (인사 끝난 것)
-    private var conns: [String: LineConnection] = [:]
-    /// 내가 붙는 중인 연결
-    private var dialing: [String: LineConnection] = [:]
     /// 다시 붙기 전 기다림
     private var nextDial: [String: Date] = [:]
     private var dialFailures: [String: Int] = [:]
     /// 역할이 wait 가 된 시각 (오래 안 붙어 오면 나도 붙어 본다)
     private var waitingSince: [String: Date] = [:]
-    private var pingSeq = 0
     private var lastDump = Date.distantPast
-    private var pingSent: [String: (Int, Date)] = [:]
 
     init() {
         let key = "syncDeviceID"
@@ -116,14 +125,23 @@ final class SyncDiscovery: ObservableObject {
             localIP: "", publicIP: "", port: 0, internalPort: 0, portMethod: "", reachable: false,
             updatedAt: .distantPast, links: [:]
         )
-        listener.onConnection = { [weak self] c in
-            Task { @MainActor in self?.accept(c) }
-        }
+        let identity = SyncKeyStore.loadOrCreate()
+        self.identity = identity
+        let stateDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("com.moimz.iNAS/sync", isDirectory: true)
+        var noteBox: (@Sendable (String) -> Void)?
+        engine = SyncEngine(identity: identity, name: DeviceInfo.computerName, stateDir: stateDir, log: { line in noteBox?(line) })
+        noteBox = { [weak self] line in Task { @MainActor in self?.note(line) } }
+        me.publicKey = identity.publicKey.rawRepresentation.base64EncodedString()
     }
 
     func start() {
         guard timers.isEmpty else { return }
-        Task { await refresh() }
+        Task {
+            await engine.setStatusHandler { [weak self] st in Task { @MainActor in self?.folderStatus = st } }
+            await engine.setLinkHandler { [weak self] links in Task { @MainActor in self?.linksChanged(links) } }
+            await refresh()
+        }
         timers = [
             Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
                 Task { @MainActor in await self?.refresh() }
@@ -133,6 +151,10 @@ final class SyncDiscovery: ObservableObject {
             },
             Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
                 Task { @MainActor in self?.manageLinks() }
+            },
+            // FSEvents 를 놓친 것까지: 한 시간마다 전체를 다시 훑는다 (Syncthing 기본과 같음)
+            Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
+                Task { @MainActor in await self?.engine.rescanAll() }
             },
         ]
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: nil) { [weak self] _ in
@@ -176,21 +198,69 @@ final class SyncDiscovery: ObservableObject {
 
     // MARK: 대기
 
+    /// 같은 iCloud 기기들의 키로 TLS(ECDHE-PSK) 대기. 기기 키 목록이 바뀌면 같은 포트에서 다시 연다
     private func ensureListening() async {
-        if listener.port != 0, me.internalPort == Int(listener.port) { return }
-        for offset in 0..<10 {
-            let port = Self.basePort + UInt16(offset)
+        let keys = syncPeers().map(\.keyID).sorted()
+        if listener != nil, keys == listenerKeys { return }
+        listener?.cancel()
+        listener = nil
+        let candidates = (listenerPort != 0 ? [listenerPort] : []) + (0..<10).map { Self.basePort + UInt16($0) }
+        for port in candidates {
             do {
-                try await listener.start(port: port)
+                let l = try NWListener(using: SyncTLS.serverParameters(me: identity, peers: syncPeers()), on: NWEndpoint.Port(rawValue: port)!)
+                l.newConnectionHandler = { [engine] c in engine.attach(c, to: nil) }
+                try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+                    let once = Once()
+                    l.stateUpdateHandler = { state in
+                        switch state {
+                        case .ready: once.run { cont.resume() }
+                        case .failed(let e), .waiting(let e): once.run { cont.resume(throwing: e) }
+                        default: break
+                        }
+                    }
+                    l.start(queue: DispatchQueue(label: "iNAS.sync.listen"))
+                }
+                listener = l
+                listenerKeys = keys
+                if listenerPort != port { note("TCP \(port) 에서 대기 중 (암호화, 기기 \(keys.count)대의 키)") }
+                listenerPort = port
                 me.internalPort = Int(port)
-                listenStatus = "TCP \(port) 에서 대기 중"
-                note(listenStatus)
+                listenStatus = "TCP \(port) 에서 대기 중 (암호화)"
                 return
             } catch {
                 listenStatus = "TCP \(port) 대기 실패: \(error.localizedDescription)"
             }
         }
         note(listenStatus)
+    }
+
+    /// 공개 키가 있는 다른 기기
+    private func syncPeer(_ d: SyncDevice) -> SyncPeer? {
+        guard let k = Data(base64Encoded: d.publicKey), k.count == 32 else { return nil }
+        return SyncPeer(publicKey: k, name: d.name)
+    }
+
+    private func syncPeers() -> [SyncPeer] { peers.compactMap(syncPeer) }
+
+    private func deviceID(forKey keyID: String) -> String? {
+        peers.first { syncPeer($0)?.keyID == keyID }?.id
+    }
+
+    // MARK: 폴더
+
+    /// 이 Mac 에서 켜진 폴더 (AppModel 이 SyncFolderStore 를 보고 넘김)
+    func setFolders(_ configs: [SyncFolderConfig]) {
+        guard configs != folderConfigs else { return }
+        folderConfigs = configs
+        Task { await engine.configure(folders: configs) }
+        let ids = Set(configs.map(\.id))
+        for id in watchers.keys where !ids.contains(id) { watchers[id] = nil }
+        for c in configs where watchers[c.id]?.path != c.path {
+            let id = c.id
+            watchers[id] = SyncWatcher(path: c.path) { [engine] paths in
+                Task { await engine.requestScan(id, paths.contains("") ? nil : paths) }
+            }
+        }
     }
 
     // MARK: 포트 열기
@@ -307,6 +377,15 @@ final class SyncDiscovery: ObservableObject {
                 lastSavedAt = Date()
             }
             peers = allDevices.values.filter { $0.id != me.id }.sorted { $0.name < $1.name }
+            // 기기 키가 바뀌면 엔진이 믿을 기기와 대기(TLS 키 목록)를 바꾼다
+            let keys = syncPeers().map(\.keyID).sorted()
+            if keys != listenerKeys {
+                let list = syncPeers()
+                Task {
+                    await engine.setPeers(list)
+                    await ensureListening()
+                }
+            }
             iCloudOK = true
             iCloudStatus = "올림 · 기기 \(allDevices.count)대 (내 기록 포함)"
         } catch {
@@ -359,6 +438,7 @@ final class SyncDiscovery: ObservableObject {
         rec["reachable"] = d.reachable ? 1 : 0
         rec["updatedAt"] = d.updatedAt
         rec["reach"] = String(decoding: (try? json.encode(d.links)) ?? Data("{}".utf8), as: UTF8.self)  // 칸 이름은 운영 스키마 그대로 reach
+        rec["publicKey"] = d.publicKey
         return rec
     }
 
@@ -383,7 +463,8 @@ final class SyncDiscovery: ObservableObject {
             localIP: r["localIP"] as? String ?? "", publicIP: r["publicIP"] as? String ?? "",
             port: r["port"] as? Int ?? 0, internalPort: r["internalPort"] as? Int ?? 0,
             portMethod: r["portMethod"] as? String ?? "", reachable: (r["reachable"] as? Int ?? 0) != 0,
-            updatedAt: r["updatedAt"] as? Date ?? .distantPast, links: links
+            updatedAt: r["updatedAt"] as? Date ?? .distantPast, links: links,
+            publicKey: r["publicKey"] as? String ?? ""
         )
     }
 
@@ -438,7 +519,7 @@ final class SyncDiscovery: ObservableObject {
     /// 저쪽이 나에게 붙어 본 결과 (true 붙음, false 못 붙음, nil 모름) — 저쪽 기록과 지금 받은 연결로.
     /// 저쪽이 붙어 본 주소가 지금 내 주소와 다르면(내가 다른 망으로 옮김) 그 기록은 버린다.
     func inbound(from peer: SyncDevice) -> (evidence: Bool?, text: String) {
-        if conns[peer.id] != nil, me.links[peer.id]?.outgoing == false { return (true, "\(peer.name) 이 붙어 와 있음") }
+        if let sp = syncPeer(peer), engineLinks[sp.keyID] != nil, me.links[peer.id]?.outgoing == false { return (true, "\(peer.name) 이 붙어 와 있음") }
         guard let l = peer.links[me.id], l.outgoing else { return (nil, "아직 아무도 붙어 보지 않음") }
         guard Self.link(l, isFor: me) else { return (nil, "내 주소가 바뀌어 다시 확인 필요") }
         let fresh = Date().timeIntervalSince(l.at) < Self.evidenceTTL
@@ -490,11 +571,12 @@ final class SyncDiscovery: ObservableObject {
         return Date().timeIntervalSince(since) > 90
     }
 
-    /// 5초마다: 역할대로 붙고, 신호 보내고, 오래 조용한 연결은 끊는다
+    /// 5초마다: 역할대로 붙는다 (신호 · 끊김 판단은 엔진이 한다)
     func manageLinks() {
         let now = Date()
         for peer in peers {
-            if conns[peer.id] != nil {
+            guard let sp = syncPeer(peer) else { continue }
+            if engineLinks[sp.keyID] != nil {
                 waitingSince[peer.id] = nil
                 continue
             }
@@ -504,144 +586,79 @@ final class SyncDiscovery: ObservableObject {
             } else {
                 waitingSince[peer.id] = nil
             }
-            if case .dial(let host, let port, let via, _) = r, dialing[peer.id] == nil, (nextDial[peer.id] ?? .distantPast) <= now {
+            let ready = !dialingIDs.contains(peer.id) && (nextDial[peer.id] ?? .distantPast) <= now
+            if case .dial(let host, let port, let via, _) = r, ready {
                 dial(peer, host: host, port: port, via: via)
             } else if case .wait = r, let since = waitingSince[peer.id], now.timeIntervalSince(since) > Self.waitGiveUp,
-                      dialing[peer.id] == nil, (nextDial[peer.id] ?? .distantPast) <= now,
-                      let target = fallbackTarget(peer) {
+                      ready, let target = fallbackTarget(peer) {
                 // 서로 기다리는 일이 없게: 3분 넘게 안 붙어 오면 나도 붙어 본다
                 note("\(peer.name) 이 \(Int(Self.waitGiveUp / 60))분 넘게 안 붙어 와서 내가 붙어 봄")
                 waitingSince[peer.id] = now
                 dial(peer, host: target.host, port: target.port, via: target.via)
             }
         }
-        for (id, c) in conns {
-            let info = me.links[id]
-            if let seen = info?.lastSeen, now.timeIntervalSince(seen) > Self.deadAfter {
-                c.queue.async { c.close("\(Int(Self.deadAfter))초 동안 신호 없음") }
-                continue
-            }
-            if info?.outgoing == true {
-                pingSeq += 1
-                pingSent[id] = (pingSeq, now)
-                let n = pingSeq
-                c.queue.async { c.send(SyncMsg(t: "ping", n: n)) }
-            }
-        }
         dumpForDebug()
     }
 
     private func dial(_ peer: SyncDevice, host: String, port: Int, via: String) {
-        let c = LineConnection(host: host, port: UInt16(port), queue: listener.queue)
-        dialing[peer.id] = c
+        guard let sp = syncPeer(peer), let params = try? SyncTLS.clientParameters(me: identity, peer: sp),
+              let p = NWEndpoint.Port(rawValue: UInt16(port)) else { return }
+        dialingIDs.insert(peer.id)
+        outgoingKeys.insert(sp.keyID)
         let started = Date()
-        let me = SyncMsg(t: "hello", id: self.me.id, name: self.me.name)
-        c.onReady = { c.send(me) }
-        c.onMessage = { [weak self] m in
-            Task { @MainActor in self?.dialMessage(m, peer: peer, conn: c, via: via, started: started) }
+        let c = NWConnection(host: NWEndpoint.Host(host), port: p, using: params)
+        engine.attach(c, to: sp) { [weak self] error in
+            Task { @MainActor in self?.dialFinished(peer, key: sp.keyID, via: via, started: started, error: error) }
         }
-        c.onClose = { [weak self] reason in
-            Task { @MainActor in self?.closed(peer.id, conn: c, reason: reason, outgoing: true, via: via) }
-        }
-        c.start()
     }
 
-    private func dialMessage(_ m: SyncMsg, peer: SyncDevice, conn c: LineConnection, via: String, started: Date) {
-        switch m.t {
-        case "hello":
-            guard m.id == peer.id else {
-                c.queue.async { c.close("다른 기기가 답함 (\(m.name ?? "?"))") }
-                return
+    private func dialFinished(_ peer: SyncDevice, key: String, via: String, started: Date, error: String?) {
+        dialingIDs.remove(peer.id)
+        if let error {
+            if engineLinks[key] == nil { outgoingKeys.remove(key) }
+            let fails = (dialFailures[peer.id] ?? 0) + 1
+            dialFailures[peer.id] = fails
+            let wait = min(60, 5 * fails)
+            nextDial[peer.id] = Date().addingTimeInterval(TimeInterval(wait))
+            if me.links[peer.id]?.error != error || me.links[peer.id]?.up == true {
+                note("\(peer.name) 에 못 붙음 — \(via): \(error) (\(wait)초 뒤 다시)")
             }
-            dialing[peer.id] = nil
+            if engineLinks[key] == nil {
+                me.links[peer.id] = SyncLinkInfo(up: false, outgoing: true, via: via, since: nil, lastSeen: nil, rtt: nil, error: error, at: Date())
+            }
+        } else {
             dialFailures[peer.id] = 0
-            replace(peer.id, with: c)
             let rtt = Int(Date().timeIntervalSince(started) * 1000)
             me.links[peer.id] = SyncLinkInfo(up: true, outgoing: true, via: via, since: Date(), lastSeen: Date(), rtt: rtt, error: nil, at: Date())
-            note("\(peer.name) 에 붙음 — \(via) (\(rtt)ms)")
-            Task { await pollICloud() }
-        case "pong":
-            guard conns[peer.id] === c else { return }
-            me.links[peer.id]?.lastSeen = Date()
-            if let (n, at) = pingSent[peer.id], n == m.n {
-                me.links[peer.id]?.rtt = Int(Date().timeIntervalSince(at) * 1000)
-            }
-        default: break
+            note("\(peer.name) 에 붙음 — \(via) (\(rtt)ms, 암호화)")
         }
-    }
-
-    /// 들어온 연결: 첫 줄이 같은 iCloud 목록 기기의 인사여야 받는다
-    private func accept(_ c: LineConnection) {
-        var peerID: String?
-        c.onMessage = { [weak self] m in
-            Task { @MainActor in
-                guard let self else { return }
-                switch m.t {
-                case "hello":
-                    guard peerID == nil, let id = m.id, id != self.me.id, let peer = self.allDevices[id] else {
-                        c.queue.async { c.close("모르는 기기 (\(m.name ?? "?"))") }
-                        if peerID == nil { self.note("모르는 기기의 연결 거절: \(m.name ?? "?") \(c.remote)") }
-                        return
-                    }
-                    peerID = id
-                    let reply = SyncMsg(t: "hello", id: self.me.id, name: self.me.name)
-                    c.queue.async { c.send(reply) }
-                    self.replace(id, with: c)
-                    self.me.links[id] = SyncLinkInfo(up: true, outgoing: false, via: c.remote, since: Date(), lastSeen: Date(), rtt: nil, error: nil, at: Date())
-                    self.note("\(peer.name) 이(가) 붙어 옴 — \(c.remote)")
-                    Task { await self.pollICloud() }
-                case "ping":
-                    guard let id = peerID, self.conns[id] === c else { return }
-                    self.me.links[id]?.lastSeen = Date()
-                    let pong = SyncMsg(t: "pong", n: m.n)
-                    c.queue.async { c.send(pong) }
-                default: break
-                }
-            }
-        }
-        c.onClose = { [weak self] reason in
-            Task { @MainActor in
-                guard let self, let id = peerID else { return }
-                self.closed(id, conn: c, reason: reason, outgoing: false, via: c.remote)
-            }
-        }
-        c.start()
-        // 인사가 10초 안에 안 오면 끊는다
-        c.queue.asyncAfter(deadline: .now() + 10) {
-            Task { @MainActor in if peerID == nil { c.queue.async { c.close("인사 없음") } } }
-        }
-    }
-
-    /// 같은 기기와의 옛 연결은 끊고 새 것으로
-    private func replace(_ id: String, with c: LineConnection) {
-        if let old = conns[id], old !== c {
-            conns[id] = c
-            old.queue.async { old.close("새 연결로 바뀜") }
-        } else {
-            conns[id] = c
-        }
-    }
-
-    private func closed(_ id: String, conn c: LineConnection, reason: String?, outgoing: Bool, via: String) {
-        let name = allDevices[id]?.name ?? "?"
-        if dialing[id] === c {
-            dialing[id] = nil
-            let fails = (dialFailures[id] ?? 0) + 1
-            dialFailures[id] = fails
-            let wait = min(60, 5 * fails)
-            nextDial[id] = Date().addingTimeInterval(TimeInterval(wait))
-            let text = reason ?? "끊김"
-            if me.links[id]?.error != text || me.links[id]?.up == true { note("\(name) 에 못 붙음 — \(via): \(text) (\(wait)초 뒤 다시)") }
-            me.links[id] = SyncLinkInfo(up: false, outgoing: true, via: via, since: nil, lastSeen: nil, rtt: nil, error: text, at: Date())
-            Task { await pollICloud() }
-            return
-        }
-        guard conns[id] === c else { return }
-        conns[id] = nil
-        nextDial[id] = Date().addingTimeInterval(3)
-        note("\(name) 연결 끊김 — \(reason ?? "")")
-        me.links[id] = SyncLinkInfo(up: false, outgoing: outgoing, via: via, since: nil, lastSeen: me.links[id]?.lastSeen, rtt: nil, error: reason ?? "끊김", at: Date())
         Task { await pollICloud() }
+    }
+
+    /// 엔진 연결이 생기거나 끊기거나 신호가 올 때
+    private func linksChanged(_ list: [SyncPeerLink]) {
+        let new = Dictionary(list.map { ($0.keyID, $0) }, uniquingKeysWith: { a, _ in a })
+        for (key, old) in engineLinks where new[key] == nil {
+            let out = outgoingKeys.contains(key)
+            outgoingKeys.remove(key)
+            guard let id = deviceID(forKey: key) else { continue }
+            nextDial[id] = Date().addingTimeInterval(3)
+            note("\(old.name) 연결 끊김")
+            me.links[id] = SyncLinkInfo(up: false, outgoing: out, via: me.links[id]?.via ?? old.remote, since: nil,
+                                        lastSeen: old.lastSeen, rtt: nil, error: "끊김", at: Date())
+        }
+        for (key, l) in new {
+            guard let id = deviceID(forKey: key) else { continue }
+            let out = outgoingKeys.contains(key)
+            if engineLinks[key] == nil, !out { note("\(l.name) 이(가) 붙어 옴 — \(l.remote) (암호화)") }
+            let info = me.links[id]
+            me.links[id] = SyncLinkInfo(up: true, outgoing: out, via: out ? (info?.via ?? l.remote) : l.remote,
+                                        since: l.since, lastSeen: l.lastSeen, rtt: l.rtt ?? info?.rtt, error: nil,
+                                        at: info?.up == true ? info!.at : Date())
+        }
+        let changed = Set(new.keys) != Set(engineLinks.keys)
+        engineLinks = new
+        if changed { Task { await pollICloud() } }
     }
 
     // MARK: 스키마 만들기 (개발 환경 한 번)
@@ -658,7 +675,8 @@ final class SyncDiscovery: ObservableObject {
                 let seed = SyncDevice(
                     id: "schema-seed", name: "seed", model: "seed", modelID: "seed", os: "seed", appVersion: "seed",
                     localIP: "0.0.0.0", publicIP: "0.0.0.0", port: 1, internalPort: 1, portMethod: "seed", reachable: true,
-                    updatedAt: Date(), links: ["x": SyncLinkInfo(up: true, outgoing: true, via: "seed", at: Date())]
+                    updatedAt: Date(), links: ["x": SyncLinkInfo(up: true, outgoing: true, via: "seed", at: Date())],
+                    publicKey: "seed"
                 )
                 try await saveChecked(record(from: seed), in: db)
                 _ = try await db.modifyRecords(saving: [], deleting: [CKRecord.ID(recordName: seed.id, zoneID: zoneID)])
@@ -695,6 +713,7 @@ final class SyncDiscovery: ObservableObject {
             var peers: [SyncDevice]
             var roles: [String: String]
             var listen, stun, iCloud: String
+            var folders: [String: SyncFolderStatus]
             var log: [String]
         }
         let f = ISO8601DateFormatter()
@@ -703,6 +722,7 @@ final class SyncDiscovery: ObservableObject {
             at: Date(), me: me, peers: peers,
             roles: Dictionary(uniqueKeysWithValues: peers.map { ("\($0.name) \($0.id.prefix(8))", role(for: $0).text) }),
             listen: listenStatus, stun: stunStatus, iCloud: iCloudStatus,
+            folders: folderStatus,
             log: log.map { "\(f.string(from: $0.0)) \($0.1)" }
         )
         let e = JSONEncoder()

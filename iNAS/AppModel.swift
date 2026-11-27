@@ -28,6 +28,11 @@ final class AppModel: ObservableObject {
         agent.connect()
         sync.start()
         folders.start()
+        // 이 Mac 에서 켜고 로컬 폴더를 고른 폴더만 동기화 엔진에
+        Publishers.CombineLatest(folders.$folders, folders.$local)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _, _ in self?.updateSyncFolders() }
+            .store(in: &cancellables)
 
         let center = NSWorkspace.shared.notificationCenter
         Publishers.Merge(
@@ -48,6 +53,15 @@ final class AppModel: ObservableObject {
                 agent.connect()
             }
             .store(in: &cancellables)
+    }
+
+    private func updateSyncFolders() {
+        let configs: [SyncFolderConfig] = folders.folders.compactMap { f in
+            let s = folders.setting(f.id)
+            guard s.enabled, let path = folders.resolvedPath(f.id) else { return nil }
+            return SyncFolderConfig(id: f.id, name: f.name, path: path, ignores: f.ignores)
+        }
+        sync.setFolders(configs)
     }
 
     func refreshMountState() {

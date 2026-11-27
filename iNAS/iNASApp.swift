@@ -33,6 +33,7 @@ struct INASApp: App {
                 .environmentObject(model)
                 .environmentObject(model.store)
                 .environmentObject(model.folders)
+                .environmentObject(model.sync)
                 .environmentObject(model.loginItem)
                 .environmentObject(model.agent)
                 .frame(minWidth: 720, minHeight: 520)
