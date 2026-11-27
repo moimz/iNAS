@@ -66,11 +66,16 @@ final class SyncFolderStore: ObservableObject {
     private var pendingEdits: [String: SyncFolder] = [:]
     private var editTasks: [String: Task<Void, Never>] = [:]
 
-    init() {
-        let d = UserDefaults.standard
+    /// 에이전트는 읽기만 한다 (폴더 고침 · iCloud 올리기는 앱 창만)
+    let readOnly: Bool
+
+    init(readOnly: Bool = false) {
+        self.readOnly = readOnly
+        let d = Prefs.defaults
         if let data = d.data(forKey: Self.cacheKey), let f = try? JSONDecoder().decode([SyncFolder].self, from: data) { folders = f }
         if let data = d.data(forKey: Self.localKey), let l = try? JSONDecoder().decode([String: LocalFolderSetting].self, from: data) { local = l }
         unsynced = Set(d.stringArray(forKey: Self.unsyncedKey) ?? [])
+        guard !readOnly else { unsynced = []; return }
         // 빌드 64 는 못 올린 폴더를 기억하지 않았다: 처음 한 번은 있는 폴더를 모두 다시 올린다(덮어쓰기라 해가 없음)
         if !d.bool(forKey: "syncFoldersReuploadOnce") {
             d.set(true, forKey: "syncFoldersReuploadOnce")
@@ -91,6 +96,26 @@ final class SyncFolderStore: ObservableObject {
     }
 
     func folder(_ id: String) -> SyncFolder? { folders.first { $0.id == id } }
+
+    /// 앱 창이 이 Mac 설정(동기화 토글 · 로컬 폴더)을 바꿨을 때 에이전트가 다시 읽는다
+    func reloadLocal() {
+        if let data = Prefs.defaults.data(forKey: Self.localKey),
+           let l = try? JSONDecoder().decode([String: LocalFolderSetting].self, from: data), l != local {
+            local = l
+        }
+    }
+
+    /// 이 Mac 에서 켜고 로컬 폴더를 고른 폴더 → 엔진 설정
+    func engineConfigs() -> [SyncFolderConfig] {
+        folders.compactMap { f in
+            let s = setting(f.id)
+            guard s.enabled, let path = resolvedPath(f.id) else { return nil }
+            return SyncFolderConfig(id: f.id, name: f.name, path: path, ignores: f.ignores)
+        }
+    }
+
+    /// 이 Mac 에서 켠 폴더가 있는지 (에이전트를 늘 띄워야 하는지)
+    var anyEnabled: Bool { local.values.contains { $0.enabled && $0.path != nil } }
     func setting(_ id: String) -> LocalFolderSetting { local[id] ?? LocalFolderSetting() }
 
     // MARK: 고치기
@@ -286,7 +311,7 @@ final class SyncFolderStore: ObservableObject {
             }
             if changed { sortAndCache() }
             // 못 올린 것 다시 올리기 (그사이 지워진 것은 뺀다)
-            for id in unsynced {
+            for id in unsynced where !readOnly {
                 if let f = folder(id) { await upload(f) } else { setUnsynced(id, false) }
             }
             if unsynced.isEmpty { iCloudError = nil }
@@ -312,7 +337,7 @@ final class SyncFolderStore: ObservableObject {
     private func setUnsynced(_ id: String, _ on: Bool) {
         let before = unsynced
         if on { unsynced.insert(id) } else { unsynced.remove(id) }
-        if unsynced != before { UserDefaults.standard.set(Array(unsynced), forKey: Self.unsyncedKey) }
+        if unsynced != before { Prefs.defaults.set(Array(unsynced), forKey: Self.unsyncedKey) }
     }
 
     nonisolated static func record(from f: SyncFolder) -> CKRecord {
@@ -337,10 +362,10 @@ final class SyncFolderStore: ObservableObject {
     }
 
     private func cache() {
-        if let data = try? JSONEncoder().encode(folders) { UserDefaults.standard.set(data, forKey: Self.cacheKey) }
+        if let data = try? JSONEncoder().encode(folders) { Prefs.defaults.set(data, forKey: Self.cacheKey) }
     }
 
     private func saveLocal() {
-        if let data = try? JSONEncoder().encode(local) { UserDefaults.standard.set(data, forKey: Self.localKey) }
+        if let data = try? JSONEncoder().encode(local) { Prefs.defaults.set(data, forKey: Self.localKey) }
     }
 }

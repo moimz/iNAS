@@ -3,7 +3,7 @@ import SwiftUI
 /// 동기화 폴더 설정: 위는 모든 Mac 공통(iCloud), 아래는 이 Mac 만
 struct FolderEditor: View {
     @EnvironmentObject private var folders: SyncFolderStore
-    @EnvironmentObject private var sync: SyncDiscovery
+    @EnvironmentObject private var agent: AgentClient
     let folderID: String
     let onDelete: () -> Void
     @State private var name = ""
@@ -14,8 +14,8 @@ struct FolderEditor: View {
     /// 키 아이디 → 기기 이름
     private var peerNames: [String: String] {
         var out: [String: String] = [:]
-        for p in sync.peers {
-            if let k = Data(base64Encoded: p.publicKey), k.count == 32 { out[SyncIdentity.keyID(of: k)] = p.name }
+        for p in agent.sync?.peers ?? [] {
+            if let k = p.keyID { out[k] = p.device.name }
         }
         return out
     }
@@ -78,7 +78,7 @@ struct FolderEditor: View {
                         }
                     }
                     if setting.path != nil {
-                        FolderStatusRows(status: sync.folderStatus[folderID], peerNames: peerNames)
+                        FolderStatusRows(status: agent.sync?.folderStatus[folderID], peerNames: peerNames)
                     }
                 }
             } header: {

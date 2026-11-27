@@ -8,8 +8,6 @@ final class AppModel: ObservableObject {
     let loginItem = LoginItemController()
     /// 상주 에이전트(자동 연결) 상태와 기록
     let agent = AgentClient()
-    /// 설정 > 동기화 (시험, sync-discovery-test 브랜치)
-    let sync = SyncDiscovery()
     /// 동기화 폴더 목록(iCloud) · 이 Mac 의 폴더 설정
     let folders = SyncFolderStore()
 
@@ -26,13 +24,15 @@ final class AppModel: ObservableObject {
         refreshMountState()
         syncAutoConnectWithLoginItem()
         agent.connect()
-        sync.start()
         folders.start()
-        // 이 Mac 에서 켜고 로컬 폴더를 고른 폴더만 동기화 엔진에
+        // 동기화는 에이전트가 돌린다. 이 Mac 의 폴더 설정이 바뀌면 에이전트에 다시 읽으라고 알린다
         Publishers.CombineLatest(folders.$folders, folders.$local)
-            .receive(on: RunLoop.main)
-            .sink { [weak self] _, _ in self?.updateSyncFolders() }
+            .dropFirst()
+            .debounce(for: .milliseconds(300), scheduler: RunLoop.main)
+            .sink { [weak self] _, _ in self?.syncFoldersChanged() }
             .store(in: &cancellables)
+        SyncKeyStore.removeOldAppKey()
+        ensureAgentAlive()
 
         let center = NSWorkspace.shared.notificationCenter
         Publishers.Merge(
@@ -51,17 +51,43 @@ final class AppModel: ObservableObject {
                 syncAutoConnectWithLoginItem()
                 refreshMountState()
                 agent.connect()
+                ensureAgentAlive()
             }
             .store(in: &cancellables)
     }
 
-    private func updateSyncFolders() {
-        let configs: [SyncFolderConfig] = folders.folders.compactMap { f in
-            let s = folders.setting(f.id)
-            guard s.enabled, let path = folders.resolvedPath(f.id) else { return nil }
-            return SyncFolderConfig(id: f.id, name: f.name, path: path, ignores: f.ignores)
+    private func syncFoldersChanged() {
+        if folders.anyEnabled, !loginItem.isOn { setAutoConnect() }
+        agent.syncCommand(.reloadFolders)
+    }
+
+    /// 앱이 뜨거나 앞으로 올 때: 에이전트가 있어야 하는데 3초 안에 이야기가 안 되면 다시 띄운다.
+    /// (launchd 가 KeepAlive · MachServices 로 다시 띄우지만, 꺼져 있거나 멈춘 경우를 대비)
+    private var checkingAgent = false
+    func ensureAgentAlive() {
+        guard !checkingAgent else { return }
+        checkingAgent = true
+        Task {
+            try? await Task.sleep(for: .seconds(3))
+            checkingAgent = false
+            guard !agent.isConnected else { return }
+            let want = store.autoMountAtLogin || store.autoRemount || folders.anyEnabled
+            guard want, LoginItemController.isDeveloperIDSigned() else { return }
+            loginItem.refresh()
+            if loginItem.status == .enabled {
+                Log.app.info("에이전트와 이야기가 안 돼 다시 띄움 (launchctl kickstart)")
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+                p.arguments = ["kickstart", "-k", "gui/\(getuid())/\(AgentXPC.machServiceName)"]
+                try? p.run()
+                p.waitUntilExit()
+            } else {
+                Log.app.info("에이전트가 등록돼 있지 않아 다시 등록함")
+                loginItem.setOn(true)
+            }
+            try? await Task.sleep(for: .seconds(2))
+            agent.connect()
         }
-        sync.setFolders(configs)
     }
 
     func refreshMountState() {
@@ -97,7 +123,8 @@ final class AppModel: ObservableObject {
     func setAutoConnect(atLogin: Bool? = nil, remount: Bool? = nil) {
         if let atLogin { store.autoMountAtLogin = atLogin }
         if let remount { store.autoRemount = remount }
-        let want = store.autoMountAtLogin || store.autoRemount
+        // 폴더 동기화를 켠 폴더가 있으면 에이전트는 늘 떠 있어야 한다
+        let want = store.autoMountAtLogin || store.autoRemount || folders.anyEnabled
         if want != loginItem.isOn {
             loginItem.setOn(want)
         }

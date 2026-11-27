@@ -26,6 +26,23 @@ struct SyncDevice: Identifiable, Codable, Equatable {
     var links: [String: SyncLinkInfo]
     /// 동기화 공개 키(Curve25519, base64). 같은 iCloud 계정의 이 키를 가진 기기만 암호화 연결을 맺을 수 있다
     var publicKey: String = ""
+    /// 이 기기가 동기화하는 폴더(고유값 → 상태). 각 기기가 자기 기록에만 쓰므로 충돌이 없다 (아이폰은 이걸 보고 붙을 Mac 을 고른다)
+    var folders: [String: SyncDeviceFolder] = [:]
+}
+
+/// 기기 기록에 올리는 폴더 상태 (로컬 경로는 안 올린다)
+struct SyncDeviceFolder: Codable, Equatable {
+    var state: String
+    var needItems: Int
+    var lastSync: Date?
+}
+
+/// 지운(차단한) 기기: 이 키는 다시 올라와도 믿지 않는다 (기록 이름 = 키 아이디)
+struct SyncBlockedDevice: Codable, Equatable, Identifiable {
+    var keyID: String
+    var name: String
+    var revokedAt: Date
+    var id: String { keyID }
 }
 
 /// 한 기기와의 연결 상태
@@ -91,6 +108,10 @@ final class SyncDiscovery: ObservableObject {
     private var outgoingKeys: Set<String> = []
     private var dialingIDs: Set<String> = []
     private var watchers: [String: SyncWatcher] = [:]
+    /// 차단한 키 (키 아이디 → 기록)
+    @Published private(set) var blocked: [String: SyncBlockedDevice] = [:]
+    nonisolated static let blockRecordType = "SyncBlock"
+    private var cleanedOldRecord = false
     private var folderConfigs: [SyncFolderConfig] = []
     private var gateway: UPnPGateway?
     private var mappedExternal: UInt16?
@@ -113,12 +134,8 @@ final class SyncDiscovery: ObservableObject {
     private var lastDump = Date.distantPast
 
     init() {
-        let key = "syncDeviceID"
-        let id = UserDefaults.standard.string(forKey: key) ?? {
-            let new = UUID().uuidString
-            UserDefaults.standard.set(new, forKey: key)
-            return new
-        }()
+        // 기기 아이디: 이 Mac 의 하드웨어 고유값 + 사용자 계정으로 정한다 → 포맷 · 다시 설치해도 같은 기록을 덮어쓴다(중복 없음)
+        let id = DeviceInfo.stableDeviceID
         me = SyncDevice(
             id: id, name: DeviceInfo.computerName, model: DeviceInfo.productName ?? DeviceInfo.modelIdentifier,
             modelID: DeviceInfo.modelIdentifier, os: DeviceInfo.osVersion, appVersion: AppVersion.text,
@@ -138,7 +155,7 @@ final class SyncDiscovery: ObservableObject {
     func start() {
         guard timers.isEmpty else { return }
         Task {
-            await engine.setStatusHandler { [weak self] st in Task { @MainActor in self?.folderStatus = st } }
+            await engine.setStatusHandler { [weak self] st in Task { @MainActor in self?.engineStatus(st) } }
             await engine.setLinkHandler { [weak self] links in Task { @MainActor in self?.linksChanged(links) } }
             await refresh()
         }
@@ -237,13 +254,103 @@ final class SyncDiscovery: ObservableObject {
     /// 공개 키가 있는 다른 기기
     private func syncPeer(_ d: SyncDevice) -> SyncPeer? {
         guard let k = Data(base64Encoded: d.publicKey), k.count == 32 else { return nil }
-        return SyncPeer(publicKey: k, name: d.name)
+        let p = SyncPeer(publicKey: k, name: d.name)
+        return blocked[p.keyID] == nil ? p : nil
     }
 
     private func syncPeers() -> [SyncPeer] { peers.compactMap(syncPeer) }
 
     private func deviceID(forKey keyID: String) -> String? {
         peers.first { syncPeer($0)?.keyID == keyID }?.id
+    }
+
+    private func engineStatus(_ st: [String: SyncFolderStatus]) {
+        folderStatus = st
+        me.folders = st.mapValues { SyncDeviceFolder(state: $0.state.rawValue, needItems: $0.needItems, lastSync: $0.lastSync) }
+    }
+
+    // MARK: 앱 창에 보낼 상태
+
+    func snapshot() -> SyncSnapshot {
+        let inb = inboundSummary
+        return SyncSnapshot(
+            me: me,
+            peers: peers.map { d in
+                let key = Data(base64Encoded: d.publicKey).flatMap { $0.count == 32 ? SyncIdentity.keyID(of: $0) : nil }
+                let isBlocked = key.map { blocked[$0] != nil } ?? false
+                return SyncSnapshot.Peer(device: d, role: isBlocked ? "차단됨" : (key == nil ? "연결 안 함 (저쪽 iNAS 가 옛 버전이라 공개 키가 없음)" : role(for: d).text),
+                                         blockedKey: isBlocked ? key : nil, keyID: key)
+            },
+            blocked: blocked.values.sorted { $0.revokedAt > $1.revokedAt },
+            listenStatus: listenStatus, stunStatus: stunStatus, iCloudStatus: iCloudStatus, iCloudOK: iCloudOK,
+            inboundOK: inb.ok, inboundText: inb.text, folderStatus: folderStatus, busy: busy,
+            log: log.prefix(60).map { SyncSnapshot.LogLine(date: $0.0, text: $0.1) }
+        )
+    }
+
+    // MARK: 기기 지우기 · 차단
+
+    /// 기기 지우기: 그 기기의 키를 차단 목록에 올리고 기기 기록을 지운다. 연결은 바로 끊는다.
+    /// (그 Mac 이 옛 앱으로 기록을 다시 올려도 이 키는 믿지 않는다. 실수면 restoreDevice)
+    func removeDevice(_ deviceID: String) async {
+        guard let d = allDevices[deviceID], d.id != me.id else { return }
+        do {
+            if let k = Data(base64Encoded: d.publicKey), k.count == 32 {
+                let keyID = SyncIdentity.keyID(of: k)
+                let rec = CKRecord(recordType: Self.blockRecordType, recordID: CKRecord.ID(recordName: keyID, zoneID: Self.zoneID))
+                rec["name"] = d.name
+                rec["revokedAt"] = Date()
+                try await Self.saveChecked(rec, in: database)
+                blocked[keyID] = SyncBlockedDevice(keyID: keyID, name: d.name, revokedAt: Date())
+            }
+            _ = try await database.modifyRecords(saving: [], deleting: [CKRecord.ID(recordName: d.id, zoneID: Self.zoneID)])
+            allDevices[d.id] = nil
+            me.links[d.id] = nil
+            note("\(d.name) 기기를 지우고 키를 차단함")
+            applyPeers(force: true)
+        } catch {
+            note("\(d.name) 기기 지우기 실패: \(error.localizedDescription)")
+        }
+    }
+
+    /// 차단 풀기 (그 기기가 다시 기록을 올리면 믿는다)
+    func restoreDevice(_ keyID: String) async {
+        do {
+            _ = try await database.modifyRecords(saving: [], deleting: [CKRecord.ID(recordName: keyID, zoneID: Self.zoneID)])
+            let name = blocked[keyID]?.name ?? "?"
+            blocked[keyID] = nil
+            note("\(name) 차단을 풂")
+            applyPeers(force: true)
+        } catch {
+            note("차단 풀기 실패: \(error.localizedDescription)")
+        }
+    }
+
+    /// 기기 목록 · 키가 바뀌면 엔진이 믿을 기기와 대기(TLS 키 목록)를 바꾼다
+    private func applyPeers(force: Bool = false) {
+        peers = allDevices.values.filter { $0.id != me.id }.sorted { $0.name < $1.name }
+        let keys = syncPeers().map(\.keyID).sorted()
+        guard force || keys != listenerKeys else { return }
+        let list = syncPeers()
+        Task {
+            await engine.setPeers(list)
+            await ensureListening()
+        }
+    }
+
+    /// 무작위 아이디를 쓰던 옛 빌드의 내 기록을 지운다 (하드웨어 기준 아이디로 바꿈)
+    private func cleanOldRecord() async {
+        guard !cleanedOldRecord else { return }
+        cleanedOldRecord = true
+        guard let old = Prefs.defaults.string(forKey: "syncDeviceID"), old != me.id else { return }
+        do {
+            _ = try await database.modifyRecords(saving: [], deleting: [CKRecord.ID(recordName: old, zoneID: Self.zoneID)])
+            Prefs.defaults.removeObject(forKey: "syncDeviceID")
+            allDevices[old] = nil
+            note("옛 기기 기록(\(old.prefix(8))…)을 지움")
+        } catch {
+            note("옛 기기 기록 지우기 실패: \(error.localizedDescription)")
+        }
     }
 
     // MARK: 폴더
@@ -366,17 +473,9 @@ final class SyncDiscovery: ObservableObject {
                 zoneReady = true
             }
             try await fetchChanges()
+            await cleanOldRecord()
             // 내 기록을 못 올려도 다른 기기 목록은 반영한다
-            peers = allDevices.values.filter { $0.id != me.id }.sorted { $0.name < $1.name }
-            // 기기 키가 바뀌면 엔진이 믿을 기기와 대기(TLS 키 목록)를 바꾼다
-            let keys = syncPeers().map(\.keyID).sorted()
-            if keys != listenerKeys {
-                let list = syncPeers()
-                Task {
-                    await engine.setPeers(list)
-                    await ensureListening()
-                }
-            }
+            applyPeers()
             me.links = me.links.filter { id, _ in allDevices[id] != nil }
             me.appVersion = AppVersion.text
             var compare = me
@@ -401,12 +500,23 @@ final class SyncDiscovery: ObservableObject {
         while true {
             let r = try await database.recordZoneChanges(inZoneWith: Self.zoneID, since: changeToken)
             for (_, result) in r.modificationResultsByID {
-                if case .success(let m) = result, let d = Self.device(from: m.record) {
+                guard case .success(let m) = result else { continue }
+                if let d = Self.device(from: m.record) {
                     if allDevices[d.id] == nil, d.id != me.id { note("iCloud 에서 \(d.name) 찾음") }
                     allDevices[d.id] = d
+                } else if m.record.recordType == Self.blockRecordType {
+                    let b = SyncBlockedDevice(keyID: m.record.recordID.recordName, name: m.record["name"] as? String ?? "?",
+                                              revokedAt: m.record["revokedAt"] as? Date ?? Date())
+                    blocked[b.keyID] = b
                 }
             }
-            for deletion in r.deletions { allDevices[deletion.recordID.recordName] = nil }
+            for deletion in r.deletions {
+                if deletion.recordType == Self.blockRecordType {
+                    blocked[deletion.recordID.recordName] = nil
+                } else {
+                    allDevices[deletion.recordID.recordName] = nil
+                }
+            }
             changeToken = r.changeToken
             if !r.moreComing { break }
         }
@@ -440,6 +550,7 @@ final class SyncDiscovery: ObservableObject {
         rec["updatedAt"] = d.updatedAt
         rec["reach"] = String(decoding: (try? json.encode(d.links)) ?? Data("{}".utf8), as: UTF8.self)  // 칸 이름은 운영 스키마 그대로 reach
         rec["publicKey"] = d.publicKey
+        rec["folders"] = String(decoding: (try? json.encode(d.folders)) ?? Data("{}".utf8), as: UTF8.self)
         return rec
     }
 
@@ -465,7 +576,8 @@ final class SyncDiscovery: ObservableObject {
             port: r["port"] as? Int ?? 0, internalPort: r["internalPort"] as? Int ?? 0,
             portMethod: r["portMethod"] as? String ?? "", reachable: (r["reachable"] as? Int ?? 0) != 0,
             updatedAt: r["updatedAt"] as? Date ?? .distantPast, links: links,
-            publicKey: r["publicKey"] as? String ?? ""
+            publicKey: r["publicKey"] as? String ?? "",
+            folders: (r["folders"] as? String).flatMap { try? jsonDecoder.decode([String: SyncDeviceFolder].self, from: Data($0.utf8)) } ?? [:]
         )
     }
 
@@ -677,14 +789,20 @@ final class SyncDiscovery: ObservableObject {
                     id: "schema-seed", name: "seed", model: "seed", modelID: "seed", os: "seed", appVersion: "seed",
                     localIP: "0.0.0.0", publicIP: "0.0.0.0", port: 1, internalPort: 1, portMethod: "seed", reachable: true,
                     updatedAt: Date(), links: ["x": SyncLinkInfo(up: true, outgoing: true, via: "seed", at: Date())],
-                    publicKey: "seed"
+                    publicKey: "seed",
+                    folders: ["seed": SyncDeviceFolder(state: "idle", needItems: 0, lastSync: Date())]
                 )
                 try await saveChecked(record(from: seed), in: db)
                 _ = try await db.modifyRecords(saving: [], deleting: [CKRecord.ID(recordName: seed.id, zoneID: zoneID)])
                 let folder = SyncFolder(id: "schema-seed-folder", name: "seed")
                 try await SyncFolderStore.save(folder, in: db)
                 _ = try await db.modifyRecords(saving: [], deleting: [CKRecord.ID(recordName: folder.id, zoneID: zoneID)])
-                print("스키마 만듦: 영역 Sync · 형식 \(recordType), \(SyncFolderStore.recordType)")
+                let block = CKRecord(recordType: blockRecordType, recordID: CKRecord.ID(recordName: "schema-seed-block", zoneID: zoneID))
+                block["name"] = "seed"
+                block["revokedAt"] = Date()
+                try await saveChecked(block, in: db)
+                _ = try await db.modifyRecords(saving: [], deleting: [block.recordID])
+                print("스키마 만듦: 영역 Sync · 형식 \(recordType), \(SyncFolderStore.recordType), \(blockRecordType)")
                 exit(0)
             } catch {
                 print("스키마 실패: \(error)")
@@ -705,7 +823,7 @@ final class SyncDiscovery: ObservableObject {
     /// 시험용: `defaults write com.moimz.iNAS syncDebugDumpDir <폴더>` 를 해 두면 상태를 <폴더>/<이름>.json 으로 쓴다
     /// 30초에 한 번만 쓴다. 5초마다 다시 쓰면 Syncthing 이 옮기는 도중 파일이 바뀌어 끝내 못 넘긴다(.syncthing.*.tmp 만 남음).
     private func dumpForDebug() {
-        guard let dir = UserDefaults.standard.string(forKey: "syncDebugDumpDir"), !dir.isEmpty else { return }
+        guard let dir = Prefs.defaults.string(forKey: "syncDebugDumpDir"), !dir.isEmpty else { return }
         guard Date().timeIntervalSince(lastDump) >= 30 else { return }
         lastDump = Date()
         struct Dump: Encodable {

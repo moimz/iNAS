@@ -1,10 +1,22 @@
 import SwiftUI
 
-/// 설정 > 동기화 (시험): 이 기기 · 같은 iCloud 의 기기와 서로 연결 · 기록
+/// 설정 > 동기화: 이 기기 · 같은 iCloud 의 기기(지우기 · 차단) · 기록.
+/// 동기화는 상주 에이전트가 돌리고, 이 화면은 에이전트가 보낸 상태(SyncSnapshot)를 보여 준다.
 struct SyncSettingsPage: View {
-    @EnvironmentObject private var sync: SyncDiscovery
+    @EnvironmentObject private var agent: AgentClient
+    @State private var removing: SyncSnapshot.Peer?
 
     var body: some View {
+        if let sync = agent.sync {
+            form(sync)
+        } else {
+            ContentUnavailableView("동기화 상태를 받는 중", systemImage: "arrow.triangle.2.circlepath",
+                                   description: Text("상주 에이전트와 연결되면 보입니다."))
+                .onAppear { agent.connect() }
+        }
+    }
+
+    private func form(_ sync: SyncSnapshot) -> some View {
         Form {
             Section {
                 let me = sync.me
@@ -25,23 +37,23 @@ struct SyncSettingsPage: View {
                     }
                 }
                 LabeledContent("들어오는 연결") {
-                    let r = sync.inboundSummary
-                    Text(r.text).foregroundStyle(r.ok == true ? Color.green : (r.ok == false ? Color.red : Color.secondary))
+                    Text(sync.inboundText).foregroundStyle(sync.inboundOK == true ? Color.green : (sync.inboundOK == false ? Color.red : Color.secondary))
                         .multilineTextAlignment(.trailing)
                 }
                 LabeledContent("iCloud") {
                     Text(sync.iCloudStatus).foregroundStyle(sync.iCloudOK ? Color.secondary : Color.orange)
                         .multilineTextAlignment(.trailing)
                 }
+                LabeledContent("키 지문", value: me.publicKey.isEmpty ? "—" : String(me.publicKey.prefix(12)))
             } header: {
                 HStack {
                     Text("이 기기")
                     Spacer()
                     if sync.busy { ProgressView().controlSize(.small) }
-                    Button("지금 새로 고침") { Task { await sync.refresh() } }.disabled(sync.busy)
+                    Button("지금 새로 고침") { agent.syncCommand(.refresh) }.disabled(sync.busy)
                 }
             } footer: {
-                Text("시험 기능입니다. 앱이 떠 있는 동안 공인 IP · 포트를 확인해 iCloud 에 올리고, 포트를 못 연 쪽이 연 쪽에 붙어 연결을 유지합니다(10초마다 신호). 아직 파일은 주고받지 않습니다.")
+                Text("상주 에이전트가 늘 공인 IP · 포트를 확인해 iCloud 에 올리고, 포트를 못 연 쪽이 연 쪽에 붙어 암호화 연결을 유지합니다. 같은 iCloud 계정의 기기만 믿습니다.")
             }
 
             Section {
@@ -50,11 +62,29 @@ struct SyncSettingsPage: View {
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(sync.peers) { peer in
-                        PeerRow(peer: peer, me: sync.me)
+                        PeerRow(peer: peer, me: sync.me, onRemove: { removing = peer },
+                                onRestore: { agent.syncCommand(.restoreDevice($0)) })
                     }
                 }
             } header: {
                 Text("같은 iCloud 의 기기")
+            } footer: {
+                Text("팔았거나 더 이상 쓰지 않는 Mac 은 지우세요. 그 Mac 의 키를 차단해서, 옛 앱이 다시 기록을 올려도 연결하지 않습니다.")
+            }
+
+            if !sync.blocked.isEmpty {
+                Section("지운 기기 (차단됨)") {
+                    ForEach(sync.blocked) { b in
+                        LabeledContent {
+                            Button("다시 허용") { agent.syncCommand(.restoreDevice(b.keyID)) }
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(b.name)
+                                Text("\(b.revokedAt.shortStamp) 지움 · 키 \(b.keyID.prefix(12))").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
             }
 
             Section {
@@ -63,9 +93,9 @@ struct SyncSettingsPage: View {
                 } else {
                     ForEach(Array(sync.log.prefix(40).enumerated()), id: \.offset) { _, item in
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text(item.0.shortStamp).font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                            Text(item.date.shortStamp).font(.caption).monospacedDigit().foregroundStyle(.secondary)
                                 .frame(width: 96, alignment: .leading)
-                            Text(item.1).font(.callout).textSelection(.enabled)
+                            Text(item.text).font(.callout).textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
@@ -75,33 +105,64 @@ struct SyncSettingsPage: View {
             }
         }
         .formStyle(.grouped)
+        .confirmationDialog(
+            "이 기기를 지울까요?",
+            isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+            presenting: removing
+        ) { peer in
+            Button("\(peer.device.name) 지우기", role: .destructive) { agent.syncCommand(.removeDevice(peer.device.id)) }
+        } message: { peer in
+            Text("\(peer.device.name) 의 기록을 iCloud 에서 지우고 키를 차단합니다. 연결은 바로 끊깁니다. 그 Mac 의 파일은 건드리지 않습니다. 실수로 지웠으면 \"다시 허용\" 으로 되돌릴 수 있습니다.")
+        }
     }
 }
 
-/// 다른 기기 한 대: 이름 · 종류 · 주소, 역할, 이쪽에서 본 연결, 저쪽에서 본 연결
+/// 다른 기기 한 대: 이름 · 종류 · 주소, 역할, 이쪽에서 본 연결, 저쪽에서 본 연결, 지우기
 private struct PeerRow: View {
-    @EnvironmentObject private var sync: SyncDiscovery
-    let peer: SyncDevice
+    let peer: SyncSnapshot.Peer
     let me: SyncDevice
+    let onRemove: () -> Void
+    let onRestore: (String) -> Void
 
-    private var stale: Bool { Date().timeIntervalSince(peer.updatedAt) > SyncDiscovery.staleAfter }
+    private var d: SyncDevice { peer.device }
+    private var age: TimeInterval { Date().timeIntervalSince(d.updatedAt) }
+
+    private var seen: (String, Color) {
+        if age > 30 * 86400 { return ("\(d.updatedAt.formatted(date: .abbreviated, time: .omitted)) 뒤로 오래 안 보임", .red) }
+        if age > SyncDiscovery.staleAfter { return ("\(d.updatedAt.shortStamp) 뒤로 소식 없음", .orange) }
+        return ("\(d.updatedAt.shortStamp) 갱신", .secondary)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
-                Image(systemName: peer.model.contains("MacBook") ? "laptopcomputer" : "desktopcomputer")
-                Text(peer.name).font(.headline)
-                Text(peer.model).foregroundStyle(.secondary)
+                Image(systemName: d.model.contains("MacBook") ? "laptopcomputer" : "desktopcomputer")
+                Text(d.name).font(.headline)
+                Text(d.model).foregroundStyle(.secondary)
                 Spacer()
-                Text(stale ? "\(peer.updatedAt.shortStamp) 뒤로 소식 없음" : "\(peer.updatedAt.shortStamp) 갱신")
-                    .font(.caption).foregroundStyle(stale ? Color.orange : Color.secondary)
+                Text(seen.0).font(.caption).foregroundStyle(seen.1)
+                Menu {
+                    if let key = peer.blockedKey {
+                        Button("다시 허용") { onRestore(key) }
+                    } else {
+                        Button("기기 지우기…", role: .destructive, action: onRemove)
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
             }
-            Text("공인 \(peer.publicIP.isEmpty ? "—" : peer.publicIP):\(peer.port) · 내부 \(peer.localIP):\(peer.internalPort) · \(peer.portMethod)")
+            Text("공인 \(d.publicIP.isEmpty ? "—" : d.publicIP):\(d.port) · 내부 \(d.localIP):\(d.internalPort) · \(d.portMethod)")
                 .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-            Text("\(peer.os) · iNAS \(peer.appVersion)").font(.caption).foregroundStyle(.secondary)
-            Text("역할: \(sync.role(for: peer).text)").font(.callout)
-            LinkLine(title: "\(me.name) 이 본 연결", link: me.links[peer.id])
-            LinkLine(title: "\(peer.name) 이 본 연결", link: peer.links[me.id])
+            Text("\(d.os) · iNAS \(d.appVersion)\(peer.keyID.map { " · 키 \($0.prefix(12))" } ?? "")").font(.caption).foregroundStyle(.secondary)
+            if !d.folders.isEmpty {
+                Text("폴더 \(d.folders.count)개 동기화 중").font(.caption).foregroundStyle(.secondary)
+            }
+            Text("역할: \(peer.role)").font(.callout).foregroundStyle(peer.blockedKey == nil ? Color.primary : Color.red)
+            LinkLine(title: "\(me.name) 이 본 연결", link: me.links[d.id])
+            LinkLine(title: "\(d.name) 이 본 연결", link: d.links[me.id])
         }
         .padding(.vertical, 2)
     }

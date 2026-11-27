@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import IOKit
 import Network
@@ -31,6 +32,19 @@ enum DeviceInfo {
             .takeRetainedValue() as? Data else { return nil }
         let s = String(decoding: data.prefix { $0 != 0 }, as: UTF8.self)
         return s.isEmpty ? nil : s
+    }
+
+    /// 하드웨어 고유값(IOPlatformUUID) + 사용자 계정 이름의 SHA-256 → UUID 모양.
+    /// 같은 Mac · 같은 계정이면 포맷 뒤에도 같다. 같은 Mac 의 다른 계정은 다르다.
+    static var stableDeviceID: String {
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPlatformExpertDevice"))
+        defer { IOObjectRelease(service) }
+        let hw = (IORegistryEntryCreateCFProperty(service, "IOPlatformUUID" as CFString, kCFAllocatorDefault, 0)?
+            .takeRetainedValue() as? String) ?? Host.current().localizedName ?? "unknown"
+        let h = Array(SHA256.hash(data: Data("iNAS-device|\(hw)|\(NSUserName())".utf8)))
+        let hex = h.prefix(16).map { String(format: "%02X", $0) }.joined()
+        let c = Array(hex)
+        return "\(String(c[0..<8]))-\(String(c[8..<12]))-\(String(c[12..<16]))-\(String(c[16..<20]))-\(String(c[20..<32]))"
     }
 
     static var osVersion: String {

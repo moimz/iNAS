@@ -33,7 +33,6 @@ struct INASApp: App {
                 .environmentObject(model)
                 .environmentObject(model.store)
                 .environmentObject(model.folders)
-                .environmentObject(model.sync)
                 .environmentObject(model.loginItem)
                 .environmentObject(model.agent)
                 .frame(minWidth: 720, minHeight: 520)
@@ -66,7 +65,6 @@ struct INASApp: App {
                 .environmentObject(model.store)
                 .environmentObject(model.loginItem)
                 .environmentObject(model.agent)
-                .environmentObject(model.sync)
         }
     }
 }
@@ -159,16 +157,5 @@ enum HeadlessRunner {
         let args = CommandLine.arguments
         guard let i = args.firstIndex(of: serversArgument), i + 1 < args.count else { return nil }
         return Set(args[i + 1].split(separator: ",").compactMap { UUID(uuidString: String($0)) })
-    }
-}
-
-/// "2.3.1 (빌드 45 · 1231858)" (Ai.md "앱 안의 버전 표시"). 해시는 빌드 단계 Scripts/stamp-commit.sh 가 INASCommit 에 넣는다
-enum AppVersion {
-    static var text: String {
-        let info = Bundle.main.infoDictionary
-        let v = info?["CFBundleShortVersionString"] as? String ?? "?"
-        let b = info?["CFBundleVersion"] as? String ?? "?"
-        let c = (info?["INASCommit"] as? String).map { " · \($0)" } ?? ""
-        return "\(v) (빌드 \(b)\(c))"
     }
 }

@@ -7,6 +7,8 @@ final class AgentClient: ObservableObject {
     @Published private(set) var status: AgentStatus?
     /// 에이전트와 이야기가 되는지. 로그인 항목이 꺼져 있거나 아직 옛 에이전트면 false.
     @Published private(set) var isConnected = false
+    /// 에이전트가 돌리는 동기화의 상태 (설정 > 동기화 · 폴더 화면)
+    @Published private(set) var sync: SyncSnapshot?
 
     private var connection: NSXPCConnection?
     private var askedRestart = false
@@ -47,6 +49,20 @@ final class AgentClient: ObservableObject {
                 MainActor.assumeIsolated { AgentClient.shared?.apply(data) }
             }
         }
+        proxy()?.fetchSync { data in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { AgentClient.shared?.applySync(data) }
+            }
+        }
+    }
+
+    func syncCommand(_ c: SyncCommand) {
+        proxy()?.syncCommand(c.encoded())
+    }
+
+    fileprivate func applySync(_ data: Data) {
+        guard let s = SyncSnapshot.decode(data), s != sync else { return }
+        sync = s
     }
 
     /// 앱이 한 개라 손님도 하나. XPC 콜백에서 찾아가려고 둔다.
@@ -82,6 +98,12 @@ private final class ClientExport: NSObject, INASAgentClientProtocol {
     func statusDidChange(_ data: Data) {
         DispatchQueue.main.async {
             MainActor.assumeIsolated { AgentClient.shared?.apply(data) }
+        }
+    }
+
+    func syncDidChange(_ data: Data) {
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { AgentClient.shared?.applySync(data) }
         }
     }
 }

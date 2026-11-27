@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import Network
 
@@ -60,6 +61,12 @@ final class AgentService: NSObject {
     /// 1분마다 60번(1시간) 해 보고 그만둔다.
     private static let retryLimit = 60
 
+    /// 폴더 동기화 (iCloud 로 기기 찾기 · 암호화 연결 · 엔진). 앱 창은 XPC 로 상태만 받는다
+    let sync = SyncDiscovery()
+    /// 폴더 목록(iCloud, 읽기만) · 이 Mac 의 폴더 설정(앱과 같이 쓰는 설정)
+    let folders = SyncFolderStore(readOnly: true)
+    private var cancellables: Set<AnyCancellable> = []
+
     private static var runningBuild: String {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
     }
@@ -112,6 +119,42 @@ final class AgentService: NSObject {
 
         // 로그인(또는 업데이트 뒤 다시 뜬 것). 로그인 직후에는 네트워크가 늦을 수 있어 자식 쪽이 몇 번 다시 시도한다.
         schedule(.start, after: 1)
+        startSync()
+    }
+
+    private func startSync() {
+        sync.start()
+        folders.start()
+        Publishers.CombineLatest(folders.$folders, folders.$local)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _, _ in
+                guard let self else { return }
+                self.sync.setFolders(self.folders.engineConfigs())
+            }
+            .store(in: &cancellables)
+        // 상태가 바뀌면 0.5초 모아 앱 창에 보낸다
+        sync.objectWillChange
+            .debounce(for: .milliseconds(500), scheduler: RunLoop.main)
+            .sink { [weak self] _ in self?.broadcastSync() }
+            .store(in: &cancellables)
+    }
+
+    func handle(_ command: SyncCommand) {
+        switch command {
+        case .refresh: Task { await sync.refresh() }
+        case .reloadFolders:
+            folders.reloadLocal()
+            Task { await folders.poll() }
+        case .removeDevice(let id): Task { await sync.removeDevice(id) }
+        case .restoreDevice(let key): Task { await sync.restoreDevice(key) }
+        }
+    }
+
+    private func broadcastSync() {
+        let data = sync.snapshot().encoded()
+        for client in clients {
+            (client.remoteObjectProxy as? INASAgentClientProtocol)?.syncDidChange(data)
+        }
     }
 
     private func pathChanged(_ key: String) {
@@ -160,6 +203,12 @@ final class AgentService: NSObject {
 
     /// 깨어나면 알림이 몰려오므로 잠깐 모았다가 한 번만 확인한다. 이유는 처음 것을 남긴다.
     func schedule(_ trigger: Trigger, after delay: TimeInterval) {
+        // 깨어남 · 네트워크 변경이면 동기화도 공인 IP · 포트 · 연결을 다시 본다
+        if trigger == .wake || trigger == .network {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                MainActor.assumeIsolated { Task { await AgentService.shared.sync.refresh() } }
+            }
+        }
         pending?.cancel()
         let first = pendingTrigger ?? trigger
         pendingTrigger = first
@@ -410,6 +459,19 @@ private final class AgentExport: NSObject, INASAgentProtocol {
     func restart() {
         DispatchQueue.main.async {
             MainActor.assumeIsolated { AgentService.shared.restartForNewApp() }
+        }
+    }
+
+    func fetchSync(reply: @escaping (Data) -> Void) {
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { reply(AgentService.shared.sync.snapshot().encoded()) }
+        }
+    }
+
+    func syncCommand(_ data: Data) {
+        guard let c = SyncCommand.decode(data) else { return }
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { AgentService.shared.handle(c) }
         }
     }
 }

@@ -24,11 +24,17 @@ enum AgentXPC {
     func fetchStatus(reply: @escaping (Data) -> Void)
     /// 앱이 새 버전으로 바뀌었을 때 옛 에이전트를 끝낸다. launchd(KeepAlive)가 새 실행 파일로 다시 띄운다.
     func restart()
+    /// 동기화 상태 (SyncSnapshot JSON)
+    func fetchSync(reply: @escaping (Data) -> Void)
+    /// 동기화 명령 (SyncCommand JSON)
+    func syncCommand(_ data: Data)
 }
 
 /// 에이전트 → 앱 창. 상태가 바뀔 때마다 보낸다.
 @objc protocol INASAgentClientProtocol {
     func statusDidChange(_ data: Data)
+    /// 동기화 상태가 바뀜 (SyncSnapshot JSON, 0.5초에 한 번까지)
+    func syncDidChange(_ data: Data)
 }
 
 /// 설정 > 서버 아래에 보여 줄 기록 한 줄
