@@ -154,7 +154,13 @@ final class SyncDiscovery: ObservableObject {
 
         do {
             let r = try await STUN.publicAddress()
-            if r.ip != me.publicIP { note("공인 IP \(r.ip) (STUN \(r.server))") }
+            if r.ip != me.publicIP {
+                note("공인 IP \(r.ip) (STUN \(r.server))")
+                if !me.publicIP.isEmpty {
+                    note("공인 IP 가 바뀌어 붙어 본 기록을 지움")
+                    networkChanged()
+                }
+            }
             me.publicIP = r.ip
             stunStatus = "STUN \(r.server)"
         } catch {
@@ -420,28 +426,41 @@ final class SyncDiscovery: ObservableObject {
         }
     }
 
-    /// 이 정도 지난 실패는 잊고 다시 해 본다
+    /// 이 정도 지난 실패는 잊고 다시 해 본다 (주소가 바뀌면 시간과 상관없이 바로 잊는다)
     static let evidenceTTL: TimeInterval = 10 * 60
 
-    /// 저쪽이 나에게 붙어 본 결과 (true 붙음, false 못 붙음, nil 모름) — 저쪽 기록과 지금 받은 연결로
+    /// 붙어 본 기록이 지금 이 주소에 대한 것인지 ("외부 1.2.3.4:47731" / "내부 192.168.0.5:47731")
+    private static func link(_ l: SyncLinkInfo, isFor d: SyncDevice) -> Bool {
+        l.via == "외부 \(d.publicIP):\(d.port)" || l.via == "내부 \(d.localIP):\(d.internalPort)"
+    }
+
+    /// 저쪽이 나에게 붙어 본 결과 (true 붙음, false 못 붙음, nil 모름) — 저쪽 기록과 지금 받은 연결로.
+    /// 저쪽이 붙어 본 주소가 지금 내 주소와 다르면(내가 다른 망으로 옮김) 그 기록은 버린다.
     func inbound(from peer: SyncDevice) -> (evidence: Bool?, text: String) {
         if conns[peer.id] != nil, me.links[peer.id]?.outgoing == false { return (true, "\(peer.name) 이 붙어 와 있음") }
         guard let l = peer.links[me.id], l.outgoing else { return (nil, "아직 아무도 붙어 보지 않음") }
+        guard Self.link(l, isFor: me) else { return (nil, "내 주소가 바뀌어 다시 확인 필요") }
+        let fresh = Date().timeIntervalSince(l.at) < Self.evidenceTTL
         if l.up { return (true, "\(peer.name) 이 붙음") }
-        if Date().timeIntervalSince(l.at) < Self.evidenceTTL { return (false, "\(peer.name) 이 못 붙음: \(l.error ?? "")") }
-        if l.since != nil || l.rtt != nil { return (true, "\(peer.name) 이 붙은 적 있음") }
-        return (nil, "오래전 실패")
+        if fresh { return (false, "\(peer.name) 이 못 붙음: \(l.error ?? "")") }
+        return (nil, "오래전 실패라 다시 확인 필요")
     }
 
-    /// 내가 저쪽에 붙어 본 결과
+    /// 내가 저쪽에 붙어 본 결과. 저쪽 주소가 바뀌었으면(다른 망으로 옮김) 기록을 버린다.
     func outbound(to peer: SyncDevice) -> (evidence: Bool?, text: String) {
-        guard let l = me.links[peer.id], l.outgoing else {
-            if let l = peer.links[me.id], !l.outgoing, l.up { return (true, "저쪽이 받아 줌") }
-            return (nil, "")
-        }
+        guard let l = me.links[peer.id], l.outgoing else { return (nil, "") }
+        guard Self.link(l, isFor: peer) else { return (nil, "저쪽 주소가 바뀜") }
         if l.up { return (true, "") }
         if Date().timeIntervalSince(l.at) < Self.evidenceTTL { return (false, l.error ?? "") }
         return (nil, "")
+    }
+
+    /// 내 공인 IP 가 바뀌면(다른 망) 내가 붙어 본 실패 기록과 다시 붙기 대기를 지운다
+    private func networkChanged() {
+        me.links = me.links.filter { $0.value.up }
+        nextDial = [:]
+        dialFailures = [:]
+        waitingSince = [:]
     }
 
     /// 화면용: 바깥에서 나에게 붙을 수 있는지 — 다른 기기가 실제로 붙어 본 결과
