@@ -15,6 +15,9 @@ struct AppSettingsView: View {
             Tab("서버", systemImage: "externaldrive.connected.to.line.below", value: "server") {
                 ServerSettingsPage().frame(width: Self.width, height: 600)
             }
+            Tab("동기화", systemImage: "arrow.triangle.2.circlepath", value: "sync") {
+                SyncSettingsPage().frame(width: Self.width, height: 680)
+            }
         }
         .background(SettingsWindowStyler())
     }

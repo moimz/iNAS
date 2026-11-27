@@ -8,6 +8,8 @@ final class AppModel: ObservableObject {
     let loginItem = LoginItemController()
     /// 상주 에이전트(자동 연결) 상태와 기록
     let agent = AgentClient()
+    /// 설정 > 동기화 (시험, sync-discovery-test 브랜치)
+    let sync = SyncDiscovery()
 
     /// 지금 붙어 있는 SMB 마운트 (로그인 항목 · 에이전트가 연결한 것도 포함)
     @Published private(set) var mounts: [MountTable.Entry] = []
@@ -22,6 +24,7 @@ final class AppModel: ObservableObject {
         refreshMountState()
         syncAutoConnectWithLoginItem()
         agent.connect()
+        sync.start()
 
         let center = NSWorkspace.shared.notificationCenter
         Publishers.Merge(

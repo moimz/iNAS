@@ -10,6 +10,8 @@ enum Entry {
     static func main() {
         if CommandLine.arguments.contains(HeadlessRunner.argument) {
             HeadlessRunner.run()
+        } else if CommandLine.arguments.contains(SyncDiscovery.schemaArgument) {
+            SyncDiscovery.runSchemaSeed()
         } else {
             INASApp.main()
         }
@@ -62,6 +64,7 @@ struct INASApp: App {
                 .environmentObject(model.store)
                 .environmentObject(model.loginItem)
                 .environmentObject(model.agent)
+                .environmentObject(model.sync)
         }
     }
 }
