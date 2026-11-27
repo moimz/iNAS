@@ -100,6 +100,7 @@ final class SyncDiscovery: ObservableObject {
     /// 역할이 wait 가 된 시각 (오래 안 붙어 오면 나도 붙어 본다)
     private var waitingSince: [String: Date] = [:]
     private var pingSeq = 0
+    private var lastDump = Date.distantPast
     private var pingSent: [String: (Int, Date)] = [:]
 
     init() {
@@ -661,8 +662,11 @@ final class SyncDiscovery: ObservableObject {
     }
 
     /// 시험용: `defaults write com.moimz.iNAS syncDebugDumpDir <폴더>` 를 해 두면 상태를 <폴더>/<이름>.json 으로 쓴다
+    /// 30초에 한 번만 쓴다. 5초마다 다시 쓰면 Syncthing 이 옮기는 도중 파일이 바뀌어 끝내 못 넘긴다(.syncthing.*.tmp 만 남음).
     private func dumpForDebug() {
         guard let dir = UserDefaults.standard.string(forKey: "syncDebugDumpDir"), !dir.isEmpty else { return }
+        guard Date().timeIntervalSince(lastDump) >= 30 else { return }
+        lastDump = Date()
         struct Dump: Encodable {
             var at: Date
             var me: SyncDevice
