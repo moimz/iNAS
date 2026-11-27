@@ -6,6 +6,7 @@ struct FolderEditor: View {
     let folderID: String
     let onDelete: () -> Void
     @State private var name = ""
+    @State private var ignores = ""
 
     private var setting: LocalFolderSetting { folders.setting(folderID) }
 
@@ -32,6 +33,18 @@ struct FolderEditor: View {
                         Text(error).foregroundStyle(.orange).textSelection(.enabled)
                     }
                 }
+            }
+
+            Section {
+                TextEditor(text: $ignores)
+                    .font(.body.monospaced())
+                    .frame(minHeight: 110)
+                    .scrollContentBackground(.hidden)
+                    .onChange(of: ignores) { _, new in folders.setIgnores(folderID, new) }
+            } header: {
+                Text("동기화 예외")
+            } footer: {
+                Text("모든 Mac 에 같게 적용됩니다(iCloud). 한 줄에 하나씩, Syncthing 의 .stignore 와 같은 문법: *.tmp · /build(맨 위만) · !keep.tmp(예외에서 빼기) · (?d)(폴더를 지울 때 같이 지워도 됨) · // 주석. 아직 파일은 주고받지 않습니다.")
             }
 
             Section {
@@ -66,7 +79,13 @@ struct FolderEditor: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear { name = folders.folder(folderID)?.name ?? "" }
+        .onAppear {
+            name = folders.folder(folderID)?.name ?? ""
+            ignores = folders.folder(folderID)?.ignores ?? ""
+        }
+        .onChange(of: folders.folder(folderID)?.ignores) { _, new in
+            if let new, new != ignores { ignores = new }
+        }
         .onChange(of: folders.folder(folderID)?.name) { _, new in
             // 다른 Mac 에서 바꾼 이름이 들어오면 (내가 고치는 중이 아닐 때) 반영
             if let new, new != name { name = new }

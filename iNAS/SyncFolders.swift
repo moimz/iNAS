@@ -2,10 +2,37 @@ import AppKit
 import CloudKit
 import Foundation
 
-/// 동기화할 폴더. iCloud 에는 고유값(레코드 이름)과 폴더명만 올라가고 모든 Mac 에서 같게 보인다.
+/// 동기화할 폴더. iCloud 에는 고유값(레코드 이름) · 폴더명 · 예외 목록이 올라가고 모든 Mac 에서 같게 보인다.
 struct SyncFolder: Identifiable, Codable, Equatable, Hashable {
     var id: String
     var name: String
+    /// 동기화 예외 목록 (한 줄에 하나, Syncthing .stignore 문법). 모든 Mac 공통
+    var ignores: String = SyncFolder.defaultIgnores
+
+    /// 새 폴더의 예외 목록 기본값: 맥이 저절로 만드는 파일
+    static let defaultIgnores = """
+    // 맥이 저절로 만드는 파일
+    (?d).DS_Store
+    (?d)._*
+    (?d).Spotlight-V100
+    (?d).Trashes
+    (?d).fseventsd
+    (?d).TemporaryItems
+    """
+
+    init(id: String, name: String, ignores: String = SyncFolder.defaultIgnores) {
+        self.id = id
+        self.name = name
+        self.ignores = ignores
+    }
+
+    // 예외 목록이 없던 옛 캐시도 읽히게
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        ignores = try c.decodeIfPresent(String.self, forKey: .ignores) ?? ""
+    }
 }
 
 /// 이 Mac 에서만 쓰는 폴더 설정 (iCloud 에 안 올림)
@@ -35,9 +62,9 @@ final class SyncFolderStore: ObservableObject {
     private var changeToken: CKServerChangeToken?
     private var timer: Timer?
     private var polling = false
-    /// 이름을 고치는 중 iCloud 에서 받은 옛 이름으로 되돌아가지 않게 (아이디 → 올릴 이름)
-    private var pendingNames: [String: String] = [:]
-    private var nameTasks: [String: Task<Void, Never>] = [:]
+    /// 고치는 중 iCloud 에서 받은 옛 값으로 되돌아가지 않게 (아이디 → 올릴 폴더)
+    private var pendingEdits: [String: SyncFolder] = [:]
+    private var editTasks: [String: Task<Void, Never>] = [:]
 
     init() {
         let d = UserDefaults.standard
@@ -84,18 +111,31 @@ final class SyncFolderStore: ObservableObject {
         return folder
     }
 
-    /// 폴더명 바꾸기: 화면에는 바로, iCloud 에는 입력이 1초 멈추면 올린다
+    /// 폴더명 바꾸기
     func rename(_ id: String, to name: String) {
-        guard let i = folders.firstIndex(where: { $0.id == id }), folders[i].name != name else { return }
-        folders[i].name = name
+        edit(id) { $0.name = name }
+    }
+
+    /// 예외 목록 바꾸기
+    func setIgnores(_ id: String, _ text: String) {
+        edit(id) { $0.ignores = text }
+    }
+
+    /// 화면에는 바로, iCloud 에는 입력이 1초 멈추면 올린다 (두 Mac 에서 동시에 고치면 나중에 올린 쪽이 남는다)
+    private func edit(_ id: String, _ change: (inout SyncFolder) -> Void) {
+        guard let i = folders.firstIndex(where: { $0.id == id }) else { return }
+        var f = folders[i]
+        change(&f)
+        guard f != folders[i] else { return }
+        folders[i] = f
         cache()
-        pendingNames[id] = name
-        nameTasks[id]?.cancel()
-        nameTasks[id] = Task { [weak self] in
+        pendingEdits[id] = f
+        editTasks[id]?.cancel()
+        editTasks[id] = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1))
             guard !Task.isCancelled, let self, let f = self.folder(id) else { return }
             await self.upload(f)
-            if self.pendingNames[id] == f.name { self.pendingNames[id] = nil }
+            if self.pendingEdits[id] == f { self.pendingEdits[id] = nil }
             self.sortAndCache()
         }
     }
@@ -104,7 +144,7 @@ final class SyncFolderStore: ObservableObject {
     func delete(_ id: String) {
         folders.removeAll { $0.id == id }
         local[id] = nil
-        pendingNames[id] = nil
+        pendingEdits[id] = nil
         setUnsynced(id, false)
         saveLocal()
         cache()
@@ -125,22 +165,74 @@ final class SyncFolderStore: ObservableObject {
         saveLocal()
     }
 
-    /// 로컬 폴더 고르기 (NSOpenPanel)
+    /// 로컬 폴더 고르기 (NSOpenPanel). 비어 있지 않으면 경고하고 다시 고를 수 있게 한다.
     func chooseLocalFolder(_ id: String) {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = true
-        panel.prompt = "선택"
-        panel.message = "\(folder(id)?.name ?? "폴더") 와 동기화할 이 Mac 의 폴더를 고르세요."
-        if let path = setting(id).path { panel.directoryURL = URL(fileURLWithPath: path) }
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        var s = setting(id)
-        s.path = url.path
-        s.bookmark = try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
-        local[id] = s
-        saveLocal()
+        var start = setting(id).path.map { URL(fileURLWithPath: $0) }
+        while true {
+            let panel = NSOpenPanel()
+            panel.canChooseDirectories = true
+            panel.canChooseFiles = false
+            panel.allowsMultipleSelection = false
+            panel.canCreateDirectories = true
+            panel.prompt = "선택"
+            panel.message = "\(folder(id)?.name ?? "폴더") 와 동기화할 이 Mac 의 폴더를 고르세요."
+            if let start { panel.directoryURL = start }
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            switch confirmNonEmpty(url) {
+            case .use:
+                var s = setting(id)
+                s.path = url.path
+                s.bookmark = try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
+                local[id] = s
+                saveLocal()
+                return
+            case .chooseAgain:
+                start = url.deletingLastPathComponent()
+            case .cancel:
+                return
+            }
+        }
+    }
+
+    private enum NonEmptyChoice { case use, chooseAgain, cancel }
+
+    /// 안에 파일이 있으면(맥이 만드는 .DS_Store 같은 것은 빼고) 경고
+    private func confirmNonEmpty(_ url: URL) -> NonEmptyChoice {
+        let (files, more) = Self.countItems(url, limit: 10_000)
+        guard files > 0 else { return .use }
+        let count = more ? "10,000개가 넘는" : "\(files.formatted())개의"
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "「\(url.lastPathComponent)」 폴더가 비어 있지 않습니다"
+        alert.informativeText = """
+        안에 있는 \(count) 항목이 다른 Mac 의 같은 폴더와 합쳐집니다. \
+        같은 이름인데 내용이 다른 파일은 충돌 사본(.sync-conflict)으로 남고, \
+        파일이 많으면 처음 동기화에 시간이 걸릴 수 있습니다.
+        """
+        alert.addButton(withTitle: "이 폴더 사용")
+        alert.addButton(withTitle: "다른 폴더 고르기")
+        alert.addButton(withTitle: "취소")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: return .use
+        case .alertSecondButtonReturn: return .chooseAgain
+        default: return .cancel
+        }
+    }
+
+    /// 폴더 안 항목 수 (하위 폴더 포함, limit 까지만 센다)
+    nonisolated static func countItems(_ url: URL, limit: Int) -> (Int, Bool) {
+        let skip: Set<String> = [".DS_Store", ".localized", ".Spotlight-V100", ".Trashes", ".fseventsd", ".TemporaryItems"]
+        guard let e = FileManager.default.enumerator(at: url, includingPropertiesForKeys: nil) else { return (0, false) }
+        var n = 0
+        for case let item as URL in e {
+            if skip.contains(item.lastPathComponent) || item.lastPathComponent.hasPrefix("._") {
+                e.skipDescendants()
+                continue
+            }
+            n += 1
+            if n >= limit { return (n, true) }
+        }
+        return (n, false)
     }
 
     /// 고른 폴더가 옮겨졌거나 이름이 바뀌었으면 북마크로 지금 경로를 찾는다
@@ -172,11 +264,13 @@ final class SyncFolderStore: ObservableObject {
                 for (_, result) in r.modificationResultsByID {
                     guard case .success(let m) = result, m.record.recordType == Self.recordType else { continue }
                     let id = m.record.recordID.recordName
-                    let name = pendingNames[id] ?? (m.record["name"] as? String ?? "")
+                    let f = pendingEdits[id] ?? SyncFolder(
+                        id: id, name: m.record["name"] as? String ?? "", ignores: m.record["ignores"] as? String ?? SyncFolder.defaultIgnores
+                    )
                     if let i = folders.firstIndex(where: { $0.id == id }) {
-                        if folders[i].name != name { folders[i].name = name; changed = true }
+                        if folders[i] != f { folders[i] = f; changed = true }
                     } else {
-                        folders.append(SyncFolder(id: id, name: name))
+                        folders.append(f)
                         changed = true
                     }
                 }
@@ -224,6 +318,7 @@ final class SyncFolderStore: ObservableObject {
     nonisolated static func record(from f: SyncFolder) -> CKRecord {
         let rec = CKRecord(recordType: recordType, recordID: CKRecord.ID(recordName: f.id, zoneID: SyncDiscovery.zoneID))
         rec["name"] = f.name
+        rec["ignores"] = f.ignores
         return rec
     }
 
