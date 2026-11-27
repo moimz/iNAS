@@ -36,7 +36,7 @@ struct SyncSettingsPage: View {
                     Button("지금 새로 고침") { Task { await sync.refresh() } }.disabled(sync.busy)
                 }
             } footer: {
-                Text("시험 기능입니다. 앱이 떠 있는 동안 1분마다 공인 IP · 포트를 확인해 iCloud 에 올리고, 다른 기기에 붙어 봅니다. 아직 파일은 주고받지 않습니다.")
+                Text("시험 기능입니다. 앱이 떠 있는 동안 공인 IP · 포트를 확인해 iCloud 에 올리고, 포트를 못 연 쪽이 연 쪽에 붙어 연결을 유지합니다(10초마다 신호). 아직 파일은 주고받지 않습니다.")
             }
 
             Section {
@@ -45,7 +45,7 @@ struct SyncSettingsPage: View {
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(sync.peers) { peer in
-                        PeerRow(peer: peer, me: sync.me, inbound: sync.inbound[peer.id])
+                        PeerRow(peer: peer, me: sync.me)
                     }
                 }
             } header: {
@@ -73,13 +73,13 @@ struct SyncSettingsPage: View {
     }
 }
 
-/// 다른 기기 한 대: 이름 · 종류 · 주소, 이쪽 → 저쪽, 저쪽 → 이쪽
+/// 다른 기기 한 대: 이름 · 종류 · 주소, 역할, 이쪽에서 본 연결, 저쪽에서 본 연결
 private struct PeerRow: View {
+    @EnvironmentObject private var sync: SyncDiscovery
     let peer: SyncDevice
     let me: SyncDevice
-    let inbound: (Date, String)?
 
-    private var stale: Bool { Date().timeIntervalSince(peer.updatedAt) > 5 * 60 }
+    private var stale: Bool { Date().timeIntervalSince(peer.updatedAt) > SyncDiscovery.staleAfter }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -94,33 +94,36 @@ private struct PeerRow: View {
             Text("공인 \(peer.publicIP.isEmpty ? "—" : peer.publicIP):\(peer.port) · 내부 \(peer.localIP):\(peer.internalPort) · \(peer.portMethod)")
                 .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             Text("\(peer.os) · iNAS \(peer.appVersion)").font(.caption).foregroundStyle(.secondary)
-            ReachLine(title: "\(me.name) → \(peer.name)", reach: me.reach[peer.id])
-            ReachLine(title: "\(peer.name) → \(me.name)", reach: peer.reach[me.id])
-            if let inbound {
-                Text("받은 연결: \(inbound.0.shortStamp) · \(inbound.1)").font(.caption).foregroundStyle(.secondary)
-            }
+            Text("역할: \(sync.role(for: peer).text)").font(.callout)
+            LinkLine(title: "\(me.name) 이 본 연결", link: me.links[peer.id])
+            LinkLine(title: "\(peer.name) 이 본 연결", link: peer.links[me.id])
         }
         .padding(.vertical, 2)
     }
 }
 
-private struct ReachLine: View {
+private struct LinkLine: View {
     let title: String
-    let reach: SyncReach?
+    let link: SyncLinkInfo?
+
+    private var detail: String {
+        guard let l = link else { return "아직 없음" }
+        let dir = l.outgoing ? "내가 붙음" : "붙어 옴"
+        if l.up {
+            var t = "연결됨 · \(dir) · \(l.via)"
+            if let since = l.since { t += " · \(since.shortStamp)부터" }
+            if let rtt = l.rtt { t += " · \(rtt)ms" }
+            return t
+        }
+        return "끊김 · \(dir) · \(l.via) · \(l.error ?? "") (\(l.at.shortStamp))"
+    }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Circle().fill(reach == nil ? Color.gray : (reach!.ok ? Color.green : Color.red)).frame(width: 7, height: 7)
+            Circle().fill(link == nil ? Color.gray : (link!.up ? Color.green : Color.red)).frame(width: 7, height: 7)
             Text(title).font(.callout)
             Spacer()
-            Group {
-                if let r = reach {
-                    Text(r.ok ? "연결됨 \(r.ms)ms · \(r.via)" : "실패 · \(r.via) · \(r.error ?? "")")
-                } else {
-                    Text("아직 안 해 봄")
-                }
-            }
-            .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.trailing)
+            Text(detail).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.trailing)
         }
     }
 }

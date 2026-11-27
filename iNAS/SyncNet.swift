@@ -326,25 +326,101 @@ enum UPnP {
     }
 }
 
-// MARK: - 대기 · 연결 확인 (아직 인사만 주고받는다. 실제 동기화와 암호화는 다음 단계)
+// MARK: - 대기 · 연결 (줄 단위 JSON. 아직 인사 · 신호만, 실제 동기화와 암호화는 다음 단계)
 
-/// 한 줄 JSON 인사
-struct SyncHello: Codable {
+/// 주고받는 한 줄: hello(누구), ping/pong(살아 있음, n 으로 짝)
+struct SyncMsg: Codable {
     var app = "iNAS-sync"
-    var v = 1
-    var id: String
-    var name: String
+    var v = 2
+    var t: String
+    var id: String?
+    var name: String?
+    var n: Int?
+}
+
+/// NWConnection 위에 줄 단위 JSON 주고받기. 콜백은 큐에서 불린다.
+final class LineConnection {
+    let conn: NWConnection
+    let queue: DispatchQueue
+    let remote: String
+    var onReady: (() -> Void)?
+    var onMessage: ((SyncMsg) -> Void)?
+    var onClose: ((String?) -> Void)?
+    private var buffer = Data()
+    private var closed = false
+
+    init(_ conn: NWConnection, queue: DispatchQueue) {
+        self.conn = conn
+        self.queue = queue
+        if case .hostPort(let host, let port) = conn.endpoint { remote = "\(host):\(port)" } else { remote = "\(conn.endpoint)" }
+    }
+
+    convenience init(host: String, port: UInt16, queue: DispatchQueue) {
+        let tcp = NWProtocolTCP.Options()
+        tcp.connectionTimeout = 8
+        tcp.enableKeepalive = true
+        self.init(NWConnection(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port)!, using: NWParameters(tls: nil, tcp: tcp)), queue: queue)
+    }
+
+    func start() {
+        conn.stateUpdateHandler = { [weak self] state in
+            guard let self else { return }
+            switch state {
+            case .ready:
+                self.onReady?()
+                self.receive()
+            case .failed(let e): self.close(e.localizedDescription)
+            case .waiting(let e): self.close(e.localizedDescription)
+            default: break
+            }
+        }
+        conn.start(queue: queue)
+    }
+
+    func send(_ m: SyncMsg) {
+        guard !closed, var data = try? JSONEncoder().encode(m) else { return }
+        data.append(0x0A)
+        conn.send(content: data, completion: .contentProcessed { [weak self] e in
+            if let e { self?.queue.async { self?.close(e.localizedDescription) } }
+        })
+    }
+
+    /// 큐에서 부른다
+    func close(_ reason: String?) {
+        guard !closed else { return }
+        closed = true
+        conn.cancel()
+        onClose?(reason)
+        onReady = nil; onMessage = nil; onClose = nil
+    }
+
+    private func receive() {
+        conn.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, complete, error in
+            guard let self, !self.closed else { return }
+            if let data { self.buffer.append(data) }
+            while let nl = self.buffer.firstIndex(of: 0x0A) {
+                let line = self.buffer[self.buffer.startIndex..<nl]
+                self.buffer = Data(self.buffer[(nl + 1)...])
+                guard let m = try? JSONDecoder().decode(SyncMsg.self, from: line), m.app == "iNAS-sync" else {
+                    return self.close("알 수 없는 말")
+                }
+                self.onMessage?(m)
+                if self.closed { return }
+            }
+            if self.buffer.count > 65536 { return self.close("줄이 너무 김") }
+            if let error { return self.close(error.localizedDescription) }
+            if complete { return self.close("저쪽이 끊음") }
+            self.receive()
+        }
+    }
 }
 
 final class SyncListener {
     private var listener: NWListener?
-    private let queue = DispatchQueue(label: "iNAS.sync.listener")
+    let queue = DispatchQueue(label: "iNAS.sync.net")
     private(set) var port: UInt16 = 0
-
-    /// 받은 인사 (메인 밖에서 불린다)
-    var onHello: ((SyncHello, String) -> Void)?
-    /// 답으로 보낼 내 인사
-    var me: () -> SyncHello = { SyncHello(id: "", name: "") }
+    /// 새로 들어온 연결 (큐에서 불린다)
+    var onConnection: ((LineConnection) -> Void)?
 
     /// 이 포트에서 대기 (이미 쓰이면 실패)
     func start(port: UInt16) async throws {
@@ -352,7 +428,10 @@ final class SyncListener {
         let params = NWParameters.tcp
         params.allowLocalEndpointReuse = true
         let l = try NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)
-        l.newConnectionHandler = { [weak self] c in self?.serve(c) }
+        l.newConnectionHandler = { [weak self] c in
+            guard let self else { return c.cancel() }
+            self.onConnection?(LineConnection(c, queue: self.queue))
+        }
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             let once = Once()
             l.stateUpdateHandler = { state in
@@ -372,79 +451,7 @@ final class SyncListener {
     func stop() {
         listener?.cancel()
         listener = nil
-    }
-
-    private func serve(_ c: NWConnection) {
-        let remote: String
-        if case .hostPort(let host, _) = c.endpoint { remote = "\(host)" } else { remote = "\(c.endpoint)" }
-        c.start(queue: queue)
-        queue.asyncAfter(deadline: .now() + 10) { c.cancel() }
-        readLine(c) { [weak self] line in
-            guard let self, let line, let hello = try? JSONDecoder().decode(SyncHello.self, from: line), hello.app == "iNAS-sync" else {
-                c.cancel()
-                return
-            }
-            self.onHello?(hello, remote)
-            var reply = (try? JSONEncoder().encode(self.me())) ?? Data()
-            reply.append(0x0A)
-            c.send(content: reply, completion: .contentProcessed { _ in c.cancel() })
-        }
-    }
-}
-
-struct ProbeResult {
-    var ok: Bool
-    var ms: Int
-    var peer: SyncHello?
-    var error: String?
-}
-
-enum SyncProbe {
-    /// host:port 에 붙어 인사하고 답을 받는다
-    static func hello(host: String, port: UInt16, me: SyncHello, timeout: Double = 6) async -> ProbeResult {
-        let start = Date()
-        let c = NWConnection(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
-        let queue = DispatchQueue(label: "iNAS.sync.probe")
-        return await withCheckedContinuation { (cont: CheckedContinuation<ProbeResult, Never>) in
-            let once = Once()
-            func finish(_ ok: Bool, _ peer: SyncHello? = nil, _ error: String? = nil) {
-                once.run {
-                    c.cancel()
-                    cont.resume(returning: ProbeResult(ok: ok, ms: Int(Date().timeIntervalSince(start) * 1000), peer: peer, error: error))
-                }
-            }
-            c.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    var data = (try? JSONEncoder().encode(me)) ?? Data()
-                    data.append(0x0A)
-                    c.send(content: data, completion: .contentProcessed { _ in })
-                    readLine(c) { line in
-                        if let line, let peer = try? JSONDecoder().decode(SyncHello.self, from: line), peer.app == "iNAS-sync" {
-                            finish(true, peer)
-                        } else {
-                            finish(false, nil, "인사 답이 없음")
-                        }
-                    }
-                case .failed(let e): finish(false, nil, e.localizedDescription)
-                case .waiting(let e): finish(false, nil, e.localizedDescription)
-                default: break
-                }
-            }
-            c.start(queue: queue)
-            queue.asyncAfter(deadline: .now() + timeout) { finish(false, nil, "시간 초과(\(Int(timeout))초)") }
-        }
-    }
-}
-
-/// 줄바꿈까지 (4KB 넘으면 버림)
-private func readLine(_ c: NWConnection, _ buffer: Data = Data(), _ done: @escaping (Data?) -> Void) {
-    c.receive(minimumIncompleteLength: 1, maximumLength: 4096) { data, _, complete, error in
-        var buf = buffer
-        if let data { buf.append(data) }
-        if let nl = buf.firstIndex(of: 0x0A) { return done(buf[..<nl]) }
-        if error != nil || complete || buf.count > 4096 { return done(nil) }
-        readLine(c, buf, done)
+        port = 0
     }
 }
 
