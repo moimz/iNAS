@@ -32,6 +32,7 @@ struct INASApp: App {
             ContentView()
                 .environmentObject(model)
                 .environmentObject(model.store)
+                .environmentObject(model.folders)
                 .environmentObject(model.loginItem)
                 .environmentObject(model.agent)
                 .frame(minWidth: 720, minHeight: 520)

@@ -61,7 +61,7 @@ final class SyncDiscovery: ObservableObject {
     nonisolated static let containerID = "iCloud.com.moimz.iNAS"
     nonisolated static let recordType = "SyncDevice"
     static let basePort: UInt16 = 47731
-    nonisolated private static let zoneID = CKRecordZone.ID(zoneName: "Sync", ownerName: CKCurrentUserDefaultName)
+    nonisolated static let zoneID = CKRecordZone.ID(zoneName: "Sync", ownerName: CKCurrentUserDefaultName)
     /// 이만큼 소식이 없으면 꺼진 기기로 본다 (iCloud 기록은 1분마다 올림)
     static let staleAfter: TimeInterval = 3 * 60
     static let pingEvery: TimeInterval = 10
@@ -662,7 +662,10 @@ final class SyncDiscovery: ObservableObject {
                 )
                 try await saveChecked(record(from: seed), in: db)
                 _ = try await db.modifyRecords(saving: [], deleting: [CKRecord.ID(recordName: seed.id, zoneID: zoneID)])
-                print("스키마 만듦: 영역 Sync · 형식 \(recordType)")
+                let folder = SyncFolder(id: "schema-seed-folder", name: "seed")
+                try await SyncFolderStore.save(folder, in: db)
+                _ = try await db.modifyRecords(saving: [], deleting: [CKRecord.ID(recordName: folder.id, zoneID: zoneID)])
+                print("스키마 만듦: 영역 Sync · 형식 \(recordType), \(SyncFolderStore.recordType)")
                 exit(0)
             } catch {
                 print("스키마 실패: \(error)")

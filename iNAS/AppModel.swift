@@ -10,6 +10,8 @@ final class AppModel: ObservableObject {
     let agent = AgentClient()
     /// 설정 > 동기화 (시험, sync-discovery-test 브랜치)
     let sync = SyncDiscovery()
+    /// 동기화 폴더 목록(iCloud) · 이 Mac 의 폴더 설정
+    let folders = SyncFolderStore()
 
     /// 지금 붙어 있는 SMB 마운트 (로그인 항목 · 에이전트가 연결한 것도 포함)
     @Published private(set) var mounts: [MountTable.Entry] = []
@@ -25,6 +27,7 @@ final class AppModel: ObservableObject {
         syncAutoConnectWithLoginItem()
         agent.connect()
         sync.start()
+        folders.start()
 
         let center = NSWorkspace.shared.notificationCenter
         Publishers.Merge(
