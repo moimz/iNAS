@@ -610,7 +610,10 @@ actor SyncEngine {
         let live = f.files.values.filter { !$0.deleted }
         s.localFiles = live.count
         s.localBytes = live.reduce(0) { $0 + $1.size }
-        s.conflicts = Array(live.filter { $0.kind == .file && SyncFolderIndex.isConflict($0.name) }.map(\.name).sorted().prefix(500))
+        // iNAS 기기(나 · 믿는 기기)가 만든 사본만. Syncthing 이 남긴 사본(끝이 Syncthing 기기 아이디)은 우리 충돌이 아니라 빼고 보여 준다
+        let mine = Set(([identity.shortID] + peers.values.map(\.shortID)).map { SyncFolderIndex.conflictTag($0) })
+        s.conflicts = Array(live.filter { $0.kind == .file && SyncFolderIndex.isConflict($0.name) && mine.contains(SyncFolderIndex.conflictTagOf($0.name) ?? "") }
+            .map(\.name).sorted().prefix(500))
         s.sharedWith = connected.values.filter { $0.folders.contains(id) }.map(\.peer.name).sorted()
         var peerNeed: [String: Int] = [:]
         for p in connected.values where p.folders.contains(id) {

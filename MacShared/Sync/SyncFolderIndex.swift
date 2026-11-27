@@ -346,8 +346,18 @@ final class SyncFolderIndex {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyyMMdd-HHmmss"
-        let short = String(format: "%016llX", by).prefix(7)
+        let short = conflictTag(by)
         return base + ".sync-conflict-" + f.string(from: Date()) + "-" + short + (ext.isEmpty ? "" : "." + ext)
+    }
+
+    /// 충돌 사본 이름 끝의 기기 표시 (짧은 아이디 16진 앞 7자리)
+    static func conflictTag(_ id: ShortID) -> String { String(String(format: "%016llX", id).prefix(7)) }
+
+    /// 이름에서 기기 표시를 꺼낸다 ("a.sync-conflict-20261128-003404-F4A54E0.txt" → "F4A54E0")
+    static func conflictTagOf(_ name: String) -> String? {
+        let base = name.split(separator: "/").last.map(String.init) ?? name
+        guard let r = base.range(of: #"\.sync-conflict-\d{8}-\d{6}-([0-9A-Za-z]+)"#, options: .regularExpression) else { return nil }
+        return String(base[r].split(separator: "-").last ?? "")
     }
 
     static func isConflict(_ name: String) -> Bool {
