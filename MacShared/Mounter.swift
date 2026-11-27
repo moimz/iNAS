@@ -3,7 +3,7 @@ import Foundation
 import NetFS
 import Network
 
-enum ShareOutcome: Hashable {
+enum ShareOutcome: Hashable, Codable {
     case mounted(path: String)
     case alreadyMounted(path: String)
     case failed(message: String)
@@ -14,14 +14,14 @@ enum ShareOutcome: Hashable {
     }
 }
 
-struct ShareResult: Hashable, Identifiable {
+struct ShareResult: Hashable, Identifiable, Codable {
     var share: String
     var outcome: ShareOutcome
     var id: String { share }
 }
 
-struct ServerResult: Hashable, Identifiable {
-    enum State: Hashable {
+struct ServerResult: Hashable, Identifiable, Codable {
+    enum State: Hashable, Codable {
         case done
         case unreachable
         case missingPassword

@@ -48,31 +48,3 @@ struct UpdateMenuButton: View {
     }
 }
 
-/// iNAS 설정 (⌘,): 업데이트
-struct SettingsView: View {
-    @Bindable private var updater = Updater.shared
-
-    /// "2.3.1 (빌드 41 · abc1234)" — 정보 창과 같은 글
-    private var version: String { AppVersion.text }
-
-    var body: some View {
-        Form {
-            Section {
-                LabeledContent("버전") {
-                    HStack(spacing: 8) {
-                        Text(version).foregroundStyle(.secondary).monospacedDigit()
-                        Button("업데이트 확인…") { updater.checkForUpdates() }.disabled(!updater.canCheck)
-                    }
-                }
-                Toggle("자동으로 업데이트 확인", isOn: $updater.automaticallyChecks)
-            } header: {
-                Text("업데이트")
-            } footer: {
-                Text("하루에 한 번 새 버전이 있는지 확인하고, 있으면 설치할지 묻습니다.").foregroundStyle(.tertiary)
-            }
-        }
-        .formStyle(.grouped)
-        .frame(width: 440)
-        .fixedSize(horizontal: false, vertical: true)
-    }
-}

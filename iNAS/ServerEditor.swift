@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ServerEditor: View {
     @EnvironmentObject private var store: ServerStore
+    @EnvironmentObject private var model: AppModel
 
     let original: ServerConfig
     @State private var draft: ServerConfig
@@ -67,8 +68,6 @@ struct ServerEditor: View {
                 Text("계정")
             } footer: {
                 Text("비밀번호는 로그인 키체인에만 저장합니다.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
             Section {
@@ -102,6 +101,8 @@ struct ServerEditor: View {
                                    !(fetchedShares ?? []).contains(where: { $0.caseInsensitiveCompare(share) == .orderedSame }) {
                                     Text("서버 목록에 없음").font(.caption).foregroundStyle(.orange)
                                 }
+                                Spacer()
+                                shareStatus(share)
                             }
                         }
                         .toggleStyle(.checkbox)
@@ -117,18 +118,23 @@ struct ServerEditor: View {
             } header: {
                 Text("자동 연결할 공유")
             } footer: {
-                Text("체크한 공유만 \"지금 연결\"과 로그인 시 연결합니다.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text("체크한 공유만 연결합니다 (지금 연결 · 자동 연결).")
             }
         }
         .formStyle(.grouped)
         .safeAreaInset(edge: .bottom) {
             HStack {
+                Button("지금 연결") { connectNow() }
+                    .disabled(model.mounting.contains(original.id) || normalizedDraft.host.isEmpty || normalizedDraft.shares.isEmpty)
+                if model.mounting.contains(original.id) {
+                    ProgressView().controlSize(.small)
+                } else {
+                    connectionSummary
+                }
+                Spacer()
                 if let saveError {
                     Text(saveError).foregroundStyle(.red).font(.callout)
                 }
-                Spacer()
                 Button("되돌리기") { revert() }
                     .disabled(!isDirty)
                 Button("저장") { save() }
@@ -147,6 +153,53 @@ struct ServerEditor: View {
             // 다른 서버를 고르거나 창을 닫으면 바뀐 내용을 저장한다.
             if isDirty, store.index(of: original.id) != nil { save() }
         }
+    }
+
+    /// 공유 줄 오른쪽: 연결됨 / 지금 연결 실패 이유
+    @ViewBuilder
+    private func shareStatus(_ share: String) -> some View {
+        let server = store.servers.first { $0.id == original.id } ?? original
+        if let path = model.mountPoint(of: share, on: server) {
+            Label("연결됨", systemImage: "circle.fill")
+                .labelStyle(StatusDotLabelStyle(color: .green))
+                .help(path)
+        } else if let message = failure(for: share) {
+            Text(message).font(.caption).foregroundStyle(.red).lineLimit(1).help(message)
+        }
+    }
+
+    private func failure(for share: String) -> String? {
+        guard let result = model.results[original.id] else { return nil }
+        for r in result.shares where r.share.caseInsensitiveCompare(share) == .orderedSame {
+            if case .failed(let message) = r.outcome { return message }
+        }
+        return nil
+    }
+
+    /// 아래 막대: 지금 연결 결과 또는 지금 상태
+    @ViewBuilder
+    private var connectionSummary: some View {
+        let server = store.servers.first { $0.id == original.id } ?? original
+        let total = server.shares.count
+        let mounted = model.mountedCount(server)
+        let result = model.results[original.id]
+        if result?.state == .unreachable {
+            Label("\(server.hostAndPort)에 닿지 않습니다.", systemImage: "wifi.slash").foregroundStyle(.orange)
+        } else if result?.state == .missingPassword {
+            Label("키체인에 비밀번호가 없습니다.", systemImage: "key").foregroundStyle(.orange)
+        } else if let failures = result?.failures, failures > 0 {
+            Label("공유 \(failures)개를 연결하지 못했습니다.", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+        } else if total > 0 {
+            Text(mounted == total ? "공유 \(total)개 모두 연결됨" : "공유 \(total)개 중 \(mounted)개 연결됨")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// 바뀐 내용이 있으면 먼저 저장하고, 저장된 설정으로 연결한다.
+    private func connectNow() {
+        if isDirty { save() }
+        guard saveError == nil, let server = store.servers.first(where: { $0.id == original.id }) else { return }
+        model.mountNow(server)
     }
 
     private func binding(for share: String) -> Binding<Bool> {
@@ -237,5 +290,19 @@ struct ServerEditor: View {
         portText = current.port.map(String.init) ?? ""
         password = ""
         saveError = nil
+    }
+}
+
+/// "● 연결됨" — 작은 색 점과 글자
+struct StatusDotLabelStyle: LabelStyle {
+    let color: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 5) {
+            Circle().fill(color).frame(width: 7, height: 7)
+            configuration.title
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
     }
 }

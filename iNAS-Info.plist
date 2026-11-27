@@ -12,5 +12,17 @@
 	<true/>
 	<key>SUScheduledCheckInterval</key>
 	<integer>86400</integer>
+	<!-- inas://settings : 메뉴 막대(iNASAgent)의 "iNAS 설정…" 이 본체 설정 창을 띄울 때 쓴다 -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.moimz.iNAS</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>inas</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

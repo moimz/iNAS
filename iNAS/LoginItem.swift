@@ -2,16 +2,50 @@ import Foundation
 import Security
 import ServiceManagement
 
-/// 앱 안의 LaunchAgent(`--mount-only`로 실행)를 SMAppService로 등록·해제한다.
+/// 앱 안의 LaunchAgent(iNASAgent.app, 메뉴 막대 에이전트)를 SMAppService로 등록·해제한다.
 @MainActor
 final class LoginItemController: ObservableObject {
-    static let plistName = "com.moimz.iNAS.agent.plist"
+    static let plistName = "com.moimz.iNAS.helper.plist"
+    /// 빌드 50까지의 이름. 같은 이름으로 다시 등록하면 BTM 항목을 다시 써서 실행 조건(LWCR)이
+    /// 본체 서명 ID(com.moimz.iNAS) 그대로 남아 iNASAgent(com.moimz.iNAS.agent)가 EX_CONFIG 로 못 떴다(2026-11-27).
+    /// 그래서 이름을 바꿔 새 항목으로 등록하고, 옛 것은 한 번 해제한다.
+    private static let legacyPlistName = "com.moimz.iNAS.agent.plist"
 
     private let service = SMAppService.agent(plistName: LoginItemController.plistName)
     @Published private(set) var status: SMAppService.Status = .notRegistered
     @Published var lastError: String?
 
-    init() { refresh() }
+    /// 마지막으로 등록할 때의 에이전트 plist 내용
+    private static let registeredPlistKey = "agentPlistAtRegister"
+
+    init() {
+        refresh()
+        migrateFromLegacyAgent()
+        reregisterIfPlistChanged()
+    }
+
+    /// 옛 로그인 항목(com.moimz.iNAS.agent)이 켜져 있으면 해제하고 새 항목을 등록한다.
+    private func migrateFromLegacyAgent() {
+        let legacy = SMAppService.agent(plistName: Self.legacyPlistName)
+        // 해제하려면 앱 안에 옛 plist 가 있어야 해서 Support/com.moimz.iNAS.agent.plist(한 번 돌고 끝나는 --mount-only)를 남겨 둔다.
+        guard legacy.status == .enabled || legacy.status == .requiresApproval else { return }
+        do {
+            try legacy.unregister()
+            Log.app.info("옛 로그인 항목(com.moimz.iNAS.agent)을 해제함")
+        } catch {
+            Log.app.error("옛 로그인 항목 해제 실패: \(error.localizedDescription)")
+        }
+        guard status != .enabled, Self.isDeveloperIDSigned() else { return }
+        do {
+            try service.register()
+            Prefs.defaults.set(Self.bundledPlist(), forKey: Self.registeredPlistKey)
+            Log.app.info("새 로그인 항목(com.moimz.iNAS.helper)을 등록함")
+        } catch {
+            lastError = error.localizedDescription
+            Log.app.error("새 로그인 항목 등록 실패: \(error.localizedDescription)")
+        }
+        refresh()
+    }
 
     var isOn: Bool { status == .enabled || status == .requiresApproval }
 
@@ -41,6 +75,7 @@ final class LoginItemController: ObservableObject {
                     return
                 }
                 try service.register()
+                Prefs.defaults.set(Self.bundledPlist(), forKey: Self.registeredPlistKey)
             } else {
                 try service.unregister()
             }
@@ -52,6 +87,31 @@ final class LoginItemController: ObservableObject {
         if on, status == .requiresApproval {
             SMAppService.openSystemSettingsLoginItems()
         }
+    }
+
+    /// 앱 안의 에이전트 plist 가 등록할 때와 달라졌으면 다시 등록한다.
+    /// launchd 는 등록할 때 읽은 plist 를 들고 있어서(`launchctl print` 의 arguments), 앱만 바꿔서는
+    /// 새 설정(예: 한 번 돌고 끝나던 `--mount-only` → 늘 떠 있는 `--agent`)이 먹지 않는다.
+    /// 등록과 같은 이유로 Developer ID 로 서명된 앱에서만 한다.
+    func reregisterIfPlistChanged() {
+        guard status == .enabled, Self.isDeveloperIDSigned(), let current = Self.bundledPlist(),
+              Prefs.defaults.data(forKey: Self.registeredPlistKey) != current
+        else { return }
+        do {
+            try service.unregister()
+            try service.register()
+            Prefs.defaults.set(current, forKey: Self.registeredPlistKey)
+            Log.app.info("에이전트 plist 가 바뀌어 로그인 항목을 다시 등록함")
+        } catch {
+            lastError = error.localizedDescription
+            Log.app.error("로그인 항목 다시 등록 실패: \(error.localizedDescription)")
+        }
+        refresh()
+    }
+
+    private static func bundledPlist() -> Data? {
+        let url = Bundle.main.bundleURL.appendingPathComponent("Contents/Library/LaunchAgents/\(plistName)")
+        return try? Data(contentsOf: url)
     }
 
     func openSystemSettings() {

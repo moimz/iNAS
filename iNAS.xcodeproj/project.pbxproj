@@ -7,7 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A10000000000000000000001 /* com.moimz.iNAS.agent.plist in Embed LaunchAgent */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* com.moimz.iNAS.agent.plist */; };
+		D40000000000000000000006 /* com.moimz.iNAS.agent.plist in Embed LaunchAgent */ = {isa = PBXBuildFile; fileRef = D40000000000000000000007 /* com.moimz.iNAS.agent.plist */; };
+		D40000000000000000000002 /* iNASAgent.app in Embed Agent */ = {isa = PBXBuildFile; fileRef = D40000000000000000000001 /* iNASAgent.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A10000000000000000000001 /* com.moimz.iNAS.helper.plist in Embed LaunchAgent */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* com.moimz.iNAS.helper.plist */; };
 		A10000000000000000000020 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000022 /* Sparkle */; };
 		B20000000000000000000001 /* iNASFileProvider.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B20000000000000000000021 /* iNASFileProvider.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		B20000000000000000000002 /* iNASFileProviderUI.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B20000000000000000000022 /* iNASFileProviderUI.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -18,6 +20,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		D40000000000000000000004 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A1000000000000000000000E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D40000000000000000000010;
+			remoteInfo = iNASAgent;
+		};
 		B20000000000000000000018 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = A1000000000000000000000E /* Project object */;
@@ -35,13 +44,25 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
+		D40000000000000000000003 /* Embed Agent */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Library/LoginItems;
+			dstSubfolderSpec = 1;
+			files = (
+				D40000000000000000000002 /* iNASAgent.app in Embed Agent */,
+			);
+			name = "Embed Agent";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A10000000000000000000003 /* Embed LaunchAgent */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			dstPath = Contents/Library/LaunchAgents;
 			dstSubfolderSpec = 1;
 			files = (
-				A10000000000000000000001 /* com.moimz.iNAS.agent.plist in Embed LaunchAgent */,
+				A10000000000000000000001 /* com.moimz.iNAS.helper.plist in Embed LaunchAgent */,
+				D40000000000000000000006 /* com.moimz.iNAS.agent.plist in Embed LaunchAgent */,
 			);
 			name = "Embed LaunchAgent";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -72,8 +93,10 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		D40000000000000000000007 /* com.moimz.iNAS.agent.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = com.moimz.iNAS.agent.plist; sourceTree = "<group>"; };
+		D40000000000000000000001 /* iNASAgent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = iNASAgent.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B20000000000000000000090 /* FFmpeg.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = Vendor/FFmpeg.xcframework; sourceTree = "<group>"; };
-		A10000000000000000000002 /* com.moimz.iNAS.agent.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = com.moimz.iNAS.agent.plist; sourceTree = "<group>"; };
+		A10000000000000000000002 /* com.moimz.iNAS.helper.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = com.moimz.iNAS.helper.plist; sourceTree = "<group>"; };
 		A10000000000000000000004 /* iNAS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = iNAS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B20000000000000000000020 /* iNAS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = iNAS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B20000000000000000000021 /* iNASFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = iNASFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -81,6 +104,16 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		D4000000000000000000000A /* MacShared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = MacShared;
+			sourceTree = "<group>";
+		};
+		D4000000000000000000000B /* iNASAgent */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = iNASAgent;
+			sourceTree = "<group>";
+		};
 		A10000000000000000000005 /* iNAS */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = iNAS;
@@ -109,6 +142,13 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		D40000000000000000000012 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A10000000000000000000006 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -148,6 +188,8 @@
 			isa = PBXGroup;
 			children = (
 				A10000000000000000000005 /* iNAS */,
+				D4000000000000000000000A /* MacShared */,
+				D4000000000000000000000B /* iNASAgent */,
 				A10000000000000000000008 /* Support */,
 				B20000000000000000000034 /* iOS */,
 				B20000000000000000000090 /* FFmpeg.xcframework */,
@@ -158,7 +200,8 @@
 		A10000000000000000000008 /* Support */ = {
 			isa = PBXGroup;
 			children = (
-				A10000000000000000000002 /* com.moimz.iNAS.agent.plist */,
+				A10000000000000000000002 /* com.moimz.iNAS.helper.plist */,
+				D40000000000000000000007 /* com.moimz.iNAS.agent.plist */,
 			);
 			path = Support;
 			sourceTree = "<group>";
@@ -167,6 +210,7 @@
 			isa = PBXGroup;
 			children = (
 				A10000000000000000000004 /* iNAS.app */,
+				D40000000000000000000001 /* iNASAgent.app */,
 				B20000000000000000000020 /* iNAS.app */,
 				B20000000000000000000021 /* iNASFileProvider.appex */,
 				B20000000000000000000022 /* iNASFileProviderUI.appex */,
@@ -188,6 +232,29 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		D40000000000000000000010 /* iNASAgent */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D40000000000000000000014 /* Build configuration list for PBXNativeTarget "iNASAgent" */;
+			buildPhases = (
+				D40000000000000000000011 /* Sources */,
+				D40000000000000000000012 /* Frameworks */,
+				D40000000000000000000013 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				D4000000000000000000000B /* iNASAgent */,
+				D4000000000000000000000A /* MacShared */,
+			);
+			name = iNASAgent;
+			packageProductDependencies = (
+			);
+			productName = iNASAgent;
+			productReference = D40000000000000000000001 /* iNASAgent.app */;
+			productType = "com.apple.product-type.application";
+		};
 		A1000000000000000000000A /* iNAS */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = A1000000000000000000000B /* Build configuration list for PBXNativeTarget "iNAS" */;
@@ -196,14 +263,18 @@
 				A10000000000000000000006 /* Frameworks */,
 				A1000000000000000000000D /* Resources */,
 				A10000000000000000000003 /* Embed LaunchAgent */,
+				D40000000000000000000003 /* Embed Agent */,
+				D40000000000000000000008 /* Thin Sparkle */,
 				C3000000000000000000A001 /* Stamp Commit */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				D40000000000000000000005 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				A10000000000000000000005 /* iNAS */,
+				D4000000000000000000000A /* MacShared */,
 			);
 			name = iNAS;
 			packageProductDependencies = (
@@ -299,6 +370,9 @@
 				LastSwiftUpdateCheck = 2700;
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
+					D40000000000000000000010 = {
+						CreatedOnToolsVersion = 27.0;
+					};
 					A1000000000000000000000A = {
 						CreatedOnToolsVersion = 27.0;
 					};
@@ -334,6 +408,7 @@
 			targets = (
 				A1000000000000000000000A /* iNAS */,
 				B20000000000000000000010 /* iNAS-iOS */,
+				D40000000000000000000010 /* iNASAgent */,
 				B20000000000000000000040 /* iNASFileProvider */,
 				B20000000000000000000050 /* iNASFileProviderUI */,
 			);
@@ -341,6 +416,13 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		D40000000000000000000013 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A1000000000000000000000D /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -372,6 +454,21 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		D40000000000000000000008 /* Thin Sparkle */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Thin Sparkle";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "sh \"$SRCROOT/Scripts/thin-sparkle.sh\"\n";
+		};
 		C3000000000000000000A001 /* Stamp Commit */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -417,6 +514,13 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		D40000000000000000000011 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A1000000000000000000000C /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -448,6 +552,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		D40000000000000000000005 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D40000000000000000000010 /* iNASAgent */;
+			targetProxy = D40000000000000000000004 /* PBXContainerItemProxy */;
+		};
 		B20000000000000000000016 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = B20000000000000000000040 /* iNASFileProvider */;
@@ -461,6 +570,59 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		D40000000000000000000015 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 4;
+				DEVELOPMENT_TEAM = XSDBV8D2XL;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = iNAS;
+				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "같은 네트워크에 있는 NAS 가 응답하는지 확인하려면 로컬 네트워크 접근이 필요합니다.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 2.3.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.moimz.iNAS.agent;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		D40000000000000000000016 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 4;
+				DEVELOPMENT_TEAM = XSDBV8D2XL;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = iNAS;
+				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "같은 네트워크에 있는 NAS 가 응답하는지 확인하려면 로컬 네트워크 접근이 필요합니다.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 2.3.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.moimz.iNAS.agent;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 		A10000000000000000000010 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -475,7 +637,7 @@
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_OPTIMIZATION_LEVEL = 0;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
@@ -497,7 +659,7 @@
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
@@ -710,6 +872,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		D40000000000000000000014 /* Build configuration list for PBXNativeTarget "iNASAgent" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D40000000000000000000015 /* Debug */,
+				D40000000000000000000016 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		A1000000000000000000000B /* Build configuration list for PBXNativeTarget "iNAS" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

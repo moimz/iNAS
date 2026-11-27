@@ -34,14 +34,12 @@ struct ContentView: View {
                     )
                 }
             }
-            Divider()
-            StatusBar()
         }
         .onAppear {
             if selection == nil { selection = store.servers.first?.id }
         }
         .task {
-            // 로그인 연결은 창 없이 돌아서 권한을 물을 수 없으므로, 창이 열릴 때 미리 받아 둔다.
+            // 자동 연결은 창 없이 돌아서 권한을 물을 수 없으므로, 창이 열릴 때 미리 받아 둔다.
             if store.notifyAfterLoginMount {
                 await Notifier.requestAuthorizationIfNeeded()
             }
@@ -52,6 +50,7 @@ struct ContentView: View {
         List(selection: $selection) {
             Section("서버") {
                 ForEach(store.servers) { server in
+                    let mounted = model.mountedCount(server)
                     HStack {
                         ServerRowIcon(enabled: server.enabled)
                         VStack(alignment: .leading, spacing: 1) {
@@ -60,6 +59,8 @@ struct ContentView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
+                        Spacer()
+                        ConnectionDot(mounted: mounted, total: server.shares.count)
                     }
                     .tag(server.id)
                 }
@@ -102,137 +103,17 @@ struct ContentView: View {
     }
 }
 
-struct StatusBar: View {
-    @EnvironmentObject private var model: AppModel
-    @EnvironmentObject private var store: ServerStore
-    @EnvironmentObject private var loginItem: LoginItemController
-    @State private var showDetails = false
+/// 사이드바 서버 줄 오른쪽의 연결 상태 점: 모두 연결 초록 · 일부만 주황 · 하나도 없으면 없음
+struct ConnectionDot: View {
+    let mounted: Int
+    let total: Int
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 16) {
-                Toggle("로그인 시 자동 연결", isOn: Binding(
-                    get: { loginItem.isOn },
-                    set: { loginItem.setOn($0) }
-                ))
-                .toggleStyle(.switch)
-                .controlSize(.small)
-
-                Toggle("로그인 연결 후 알림", isOn: Binding(
-                    get: { store.notifyAfterLoginMount },
-                    set: { on in
-                        store.notifyAfterLoginMount = on
-                        if on { Task { await Notifier.requestAuthorization() } }
-                    }
-                ))
-                .toggleStyle(.checkbox)
-                .controlSize(.small)
-
-                Spacer()
-
-                Button {
-                    showDetails = true
-                } label: {
-                    Label(model.summary, systemImage: model.hasProblems ? "exclamationmark.triangle" : "checkmark.circle")
-                        .labelStyle(.titleAndIcon)
-                        .foregroundStyle(model.hasProblems ? .orange : .secondary)
-                }
-                .buttonStyle(.plain)
-                .help("공유별 상태 보기")
-                .popover(isPresented: $showDetails, arrowEdge: .top) {
-                    ResultsView(states: model.shareStates, results: model.lastResults, date: model.lastRun)
-                }
-
-                Button {
-                    model.mountNow()
-                } label: {
-                    if model.isMounting {
-                        ProgressView().controlSize(.small).frame(width: 60)
-                    } else {
-                        Text("지금 연결")
-                    }
-                }
-                .disabled(model.isMounting)
-            }
-            if let text = loginItem.statusText {
-                HStack {
-                    Text(text).font(.caption).foregroundStyle(.orange)
-                    Button("시스템 설정 열기") { loginItem.openSystemSettings() }
-                        .controlSize(.small)
-                }
-            }
-            if let error = loginItem.lastError {
-                Text(error).font(.caption).foregroundStyle(.red)
-            }
+        if total > 0, mounted > 0 {
+            Circle()
+                .fill(mounted == total ? Color.green : Color.orange)
+                .frame(width: 8, height: 8)
+                .help(mounted == total ? "공유 \(total)개 모두 연결됨" : "공유 \(total)개 중 \(mounted)개 연결됨")
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(.bar)
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            loginItem.refresh()
-            model.refreshMountState()
-        }
-    }
-}
-
-struct ResultsView: View {
-    let states: [ShareState]
-    let results: [ServerResult]
-    let date: Date?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("지금 상태").font(.headline)
-            if states.isEmpty {
-                row("자동 연결할 공유가 없습니다.", "minus.circle", .secondary)
-            }
-            ForEach(states) { state in
-                if let path = state.mountPoint {
-                    row("\(state.serverName) / \(state.share) — 연결됨 (\(path))", "checkmark.circle.fill", .green)
-                } else {
-                    row("\(state.serverName) / \(state.share) — 연결 안 됨", "circle.dashed", .orange)
-                }
-            }
-            if let date {
-                Divider()
-                Text("\(date.formatted(date: .omitted, time: .standard)) \"지금 연결\" 결과")
-                    .font(.headline)
-            }
-            ForEach(results) { result in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(result.serverName).bold()
-                    switch result.state {
-                    case .unreachable:
-                        row("서버에 닿지 않아 건너뛰었습니다.", "wifi.slash", .orange)
-                    case .missingPassword:
-                        row("키체인에 비밀번호가 없습니다.", "key", .orange)
-                    case .nothingSelected:
-                        row("자동 연결할 공유를 고르지 않았습니다.", "minus.circle", .secondary)
-                    case .done:
-                        ForEach(result.shares) { share in
-                            switch share.outcome {
-                            case .mounted(let path):
-                                row("\(share.share) — 연결함 (\(path))", "checkmark.circle.fill", .green)
-                            case .alreadyMounted:
-                                row("\(share.share) — 이미 연결됨", "checkmark.circle", .secondary)
-                            case .failed(let message):
-                                row("\(share.share) — \(message)", "xmark.octagon.fill", .red)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        .padding(16)
-        .frame(minWidth: 320, alignment: .leading)
-    }
-
-    private func row(_ text: String, _ symbol: String, _ color: Color) -> some View {
-        Label {
-            Text(text).textSelection(.enabled)
-        } icon: {
-            Image(systemName: symbol).foregroundStyle(color)
-        }
-        .font(.callout)
     }
 }

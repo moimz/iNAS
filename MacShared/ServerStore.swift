@@ -1,6 +1,15 @@
 import Foundation
 import os
 
+/// 앱과 에이전트(com.moimz.iNAS.agent)가 같이 쓰는 설정 저장소: 앱의 UserDefaults(com.moimz.iNAS).
+/// 에이전트는 번들 ID 가 달라 standard 로 읽으면 자기 것(빈 것)을 읽는다.
+enum Prefs {
+    static let suiteName = "com.moimz.iNAS"
+    static let defaults: UserDefaults = Bundle.main.bundleIdentifier == suiteName
+        ? .standard
+        : UserDefaults(suiteName: suiteName) ?? .standard
+}
+
 enum Log {
     static let app = Logger(subsystem: "com.moimz.iNAS", category: "app")
     static let mount = Logger(subsystem: "com.moimz.iNAS", category: "mount")
@@ -65,27 +74,33 @@ struct CredentialKey: Hashable {
 
 final class ServerStore: ObservableObject {
     private static let serversKey = "servers.v1"
-    private static let seededKey = "didSeedDefaults"
     private static let notifyKey = "notifyAfterLoginMount"
+    private static let atLoginKey = "autoMountAtLogin"
+    private static let remountKey = "autoRemount"
 
     @Published var servers: [ServerConfig] {
         didSet { Self.save(servers) }
     }
 
     @Published var notifyAfterLoginMount: Bool {
-        didSet { UserDefaults.standard.set(notifyAfterLoginMount, forKey: Self.notifyKey) }
+        didSet { Prefs.defaults.set(notifyAfterLoginMount, forKey: Self.notifyKey) }
+    }
+
+    /// 설정 > 서버 > 시작 시 자동 연결 (에이전트가 로그인할 때 연결)
+    @Published var autoMountAtLogin: Bool {
+        didSet { Prefs.defaults.set(autoMountAtLogin, forKey: Self.atLoginKey) }
+    }
+
+    /// 설정 > 서버 > 연결 해제 시 자동 연결 (깨어남 · 네트워크 변경 · 서버가 끊겼다 돌아올 때)
+    @Published var autoRemount: Bool {
+        didSet { Prefs.defaults.set(autoRemount, forKey: Self.remountKey) }
     }
 
     init() {
-        let defaults = UserDefaults.standard
-        if !defaults.bool(forKey: Self.seededKey) {
-            defaults.set(true, forKey: Self.seededKey)
-            if Self.loadServers().isEmpty {
-                Self.save([Self.legacyServer])
-            }
-        }
         servers = Self.loadServers()
         notifyAfterLoginMount = Self.loadNotifyPreference()
+        autoMountAtLogin = Self.loadAutoMountAtLogin()
+        autoRemount = Self.loadAutoRemount()
     }
 
     func index(of id: ServerConfig.ID) -> Int? {
@@ -109,7 +124,7 @@ final class ServerStore: ObservableObject {
     // MARK: 저장소
 
     static func loadServers() -> [ServerConfig] {
-        guard let data = UserDefaults.standard.data(forKey: serversKey) else { return [] }
+        guard let data = Prefs.defaults.data(forKey: serversKey) else { return [] }
         do {
             return try JSONDecoder().decode([ServerConfig].self, from: data)
         } catch {
@@ -119,24 +134,23 @@ final class ServerStore: ObservableObject {
     }
 
     static func loadNotifyPreference() -> Bool {
-        UserDefaults.standard.object(forKey: notifyKey) as? Bool ?? true
+        Prefs.defaults.object(forKey: notifyKey) as? Bool ?? true
+    }
+
+    static func loadAutoMountAtLogin() -> Bool {
+        Prefs.defaults.object(forKey: atLoginKey) as? Bool ?? true
+    }
+
+    static func loadAutoRemount() -> Bool {
+        Prefs.defaults.object(forKey: remountKey) as? Bool ?? true
     }
 
     private static func save(_ servers: [ServerConfig]) {
         do {
             let data = try JSONEncoder().encode(servers)
-            UserDefaults.standard.set(data, forKey: serversKey)
+            Prefs.defaults.set(data, forKey: serversKey)
         } catch {
             Log.app.error("서버 설정을 저장하지 못했습니다: \(error.localizedDescription)")
         }
     }
-
-    /// 기존 iNAS 애플릿에서 쓰던 서버. 비밀번호는 사용자가 직접 넣는다.
-    private static let legacyServer = ServerConfig(
-        name: "iNAS",
-        host: "nas.moimz.com",
-        port: 5445,
-        username: "iNas",
-        shares: ["Application", "Book", "Media", "Project", "Temp", "AES"]
-    )
 }
