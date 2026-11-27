@@ -141,6 +141,9 @@ actor SyncEngine {
         for (id, p) in connected where peers[id] == nil {
             p.conn.close("iCloud 기기 목록에서 빠짐")
         }
+        // 충돌 사본 목록(어느 기기 것인지)이 기기 목록에 따라 달라지므로 다시 계산
+        for f in folders.values { updateStatus(f) }
+        publish()
     }
 
     func connectedPeerIDs() -> [String] { Array(connected.keys) }
