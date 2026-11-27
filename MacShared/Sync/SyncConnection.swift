@@ -115,6 +115,7 @@ final class FrameConnection: @unchecked Sendable {
     var onMessage: ((SyncMessage) -> Void)?
     var onClose: ((String?) -> Void)?
     private var closed = false
+    private var wasReady = false
     private let lock = NSLock()
 
     init(_ conn: NWConnection, queue: DispatchQueue) {
@@ -130,9 +131,12 @@ final class FrameConnection: @unchecked Sendable {
             guard let self else { return }
             switch state {
             case .ready:
+                self.wasReady = true
                 self.onReady?()
                 self.readFrame()
-            case .failed(let e), .waiting(let e): self.close(Self.describe(e))
+            case .failed(let e), .waiting(let e):
+                // 붙은 뒤의 끊김은 "길이 막힘" 이 아니다
+                self.close(self.wasReady ? "끊김: " + e.localizedDescription : Self.describe(e))
             case .cancelled: self.close(nil)
             default: break
             }

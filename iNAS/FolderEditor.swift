@@ -87,6 +87,11 @@ struct FolderEditor: View {
                 Text("이 설정은 이 Mac 에만 저장됩니다. 파일은 iCloud 를 거치지 않고, 같은 iCloud 계정의 Mac 끼리 암호화 연결로 바로 주고받습니다.")
             }
 
+            if setting.enabled, let root = folders.resolvedPath(folderID),
+               let conflicts = agent.sync?.folderStatus[folderID]?.conflicts, !conflicts.isEmpty {
+                ConflictSection(root: root, conflicts: conflicts)
+            }
+
             Section {
                 Button("폴더 삭제…", role: .destructive, action: onDelete)
             }

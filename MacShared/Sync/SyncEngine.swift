@@ -19,6 +19,8 @@ struct SyncFolderStatus: Codable, Equatable {
     var peerNeed: [String: Int] = [:]
     var lastError: String?
     var lastSync: Date?
+    /// 충돌 사본 (이름에 .sync-conflict- 가 든 파일, 폴더 기준 경로, 최대 500개)
+    var conflicts: [String] = []
 }
 
 /// 기기 연결 상태 (화면 · SyncDiscovery 용)
@@ -608,6 +610,7 @@ actor SyncEngine {
         let live = f.files.values.filter { !$0.deleted }
         s.localFiles = live.count
         s.localBytes = live.reduce(0) { $0 + $1.size }
+        s.conflicts = Array(live.filter { $0.kind == .file && SyncFolderIndex.isConflict($0.name) }.map(\.name).sorted().prefix(500))
         s.sharedWith = connected.values.filter { $0.folders.contains(id) }.map(\.peer.name).sorted()
         var peerNeed: [String: Int] = [:]
         for p in connected.values where p.folders.contains(id) {
