@@ -25,8 +25,11 @@ struct FolderEditor: View {
             } footer: {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("고유값과 폴더명은 iCloud 로 모든 Mac 에서 같게 보입니다. 각 Mac 이 고른 로컬 폴더는 이름이 달라도 이 폴더 아래에서 서로 동기화됩니다.")
+                    if folders.unsynced.contains(folderID) {
+                        Text("이 폴더는 아직 iCloud 에 올라가지 않았습니다.").foregroundStyle(.orange)
+                    }
                     if let error = folders.iCloudError {
-                        Text(error).foregroundStyle(.orange)
+                        Text(error).foregroundStyle(.orange).textSelection(.enabled)
                     }
                 }
             }

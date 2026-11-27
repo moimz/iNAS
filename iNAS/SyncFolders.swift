@@ -24,8 +24,11 @@ final class SyncFolderStore: ObservableObject {
 
     @Published private(set) var folders: [SyncFolder] = []
     @Published private(set) var local: [String: LocalFolderSetting] = [:]
-    /// iCloud 오류 (없으면 nil)
+    /// iCloud 오류 (없으면 nil). 못 올린 것이 남아 있으면 지우지 않는다
     @Published private(set) var iCloudError: String?
+    /// 아직 iCloud 에 못 올린 폴더 아이디 (다시 올림, 껐다 켜도 기억)
+    @Published private(set) var unsynced: Set<String> = []
+    private static let unsyncedKey = "syncFoldersUnsynced"
 
     private lazy var database = CKContainer(identifier: SyncDiscovery.containerID).privateCloudDatabase
     private var zoneReady = false
@@ -40,6 +43,13 @@ final class SyncFolderStore: ObservableObject {
         let d = UserDefaults.standard
         if let data = d.data(forKey: Self.cacheKey), let f = try? JSONDecoder().decode([SyncFolder].self, from: data) { folders = f }
         if let data = d.data(forKey: Self.localKey), let l = try? JSONDecoder().decode([String: LocalFolderSetting].self, from: data) { local = l }
+        unsynced = Set(d.stringArray(forKey: Self.unsyncedKey) ?? [])
+        // 빌드 64 는 못 올린 폴더를 기억하지 않았다: 처음 한 번은 있는 폴더를 모두 다시 올린다(덮어쓰기라 해가 없음)
+        if !d.bool(forKey: "syncFoldersReuploadOnce") {
+            d.set(true, forKey: "syncFoldersReuploadOnce")
+            unsynced.formUnion(folders.map(\.id))
+            d.set(Array(unsynced), forKey: Self.unsyncedKey)
+        }
     }
 
     func start() {
@@ -95,6 +105,7 @@ final class SyncFolderStore: ObservableObject {
         folders.removeAll { $0.id == id }
         local[id] = nil
         pendingNames[id] = nil
+        setUnsynced(id, false)
         saveLocal()
         cache()
         Task {
@@ -102,6 +113,7 @@ final class SyncFolderStore: ObservableObject {
                 _ = try await database.modifyRecords(saving: [], deleting: [CKRecord.ID(recordName: id, zoneID: SyncDiscovery.zoneID)])
             } catch {
                 iCloudError = "삭제를 iCloud 에 못 올림: \(error.localizedDescription)"
+                Log.app.error("folders: \(self.iCloudError ?? "", privacy: .public)")
             }
         }
     }
@@ -179,9 +191,14 @@ final class SyncFolderStore: ObservableObject {
                 if !r.moreComing { break }
             }
             if changed { sortAndCache() }
-            iCloudError = nil
+            // 못 올린 것 다시 올리기 (그사이 지워진 것은 뺀다)
+            for id in unsynced {
+                if let f = folder(id) { await upload(f) } else { setUnsynced(id, false) }
+            }
+            if unsynced.isEmpty { iCloudError = nil }
         } catch {
             iCloudError = "iCloud 오류: \(error.localizedDescription)"
+            Log.app.error("folders: \(self.iCloudError ?? "", privacy: .public)")
             if let ck = error as? CKError, ck.code == .changeTokenExpired { changeToken = nil }
         }
     }
@@ -189,10 +206,19 @@ final class SyncFolderStore: ObservableObject {
     private func upload(_ f: SyncFolder) async {
         do {
             try await Self.save(f, in: database)
-            iCloudError = nil
+            setUnsynced(f.id, false)
+            if unsynced.isEmpty { iCloudError = nil }
         } catch {
-            iCloudError = "iCloud 에 못 올림: \(error.localizedDescription)"
+            setUnsynced(f.id, true)
+            iCloudError = "iCloud 에 못 올림(15초마다 다시): \(error.localizedDescription)"
+            Log.app.error("folders: \(self.iCloudError ?? "", privacy: .public)")
         }
+    }
+
+    private func setUnsynced(_ id: String, _ on: Bool) {
+        let before = unsynced
+        if on { unsynced.insert(id) } else { unsynced.remove(id) }
+        if unsynced != before { UserDefaults.standard.set(Array(unsynced), forKey: Self.unsyncedKey) }
     }
 
     nonisolated static func record(from f: SyncFolder) -> CKRecord {
