@@ -366,16 +366,7 @@ final class SyncDiscovery: ObservableObject {
                 zoneReady = true
             }
             try await fetchChanges()
-            me.links = me.links.filter { id, _ in allDevices[id] != nil }
-            me.appVersion = AppVersion.text
-            var compare = me
-            compare.updatedAt = lastSaved?.updatedAt ?? .distantPast
-            if forceSave || compare != lastSaved || Date().timeIntervalSince(lastSavedAt) > 60 {
-                me.updatedAt = Date()
-                try await save(me)
-                lastSaved = me
-                lastSavedAt = Date()
-            }
+            // 내 기록을 못 올려도 다른 기기 목록은 반영한다
             peers = allDevices.values.filter { $0.id != me.id }.sorted { $0.name < $1.name }
             // 기기 키가 바뀌면 엔진이 믿을 기기와 대기(TLS 키 목록)를 바꾼다
             let keys = syncPeers().map(\.keyID).sorted()
@@ -385,6 +376,16 @@ final class SyncDiscovery: ObservableObject {
                     await engine.setPeers(list)
                     await ensureListening()
                 }
+            }
+            me.links = me.links.filter { id, _ in allDevices[id] != nil }
+            me.appVersion = AppVersion.text
+            var compare = me
+            compare.updatedAt = lastSaved?.updatedAt ?? .distantPast
+            if forceSave || compare != lastSaved || Date().timeIntervalSince(lastSavedAt) > 60 {
+                me.updatedAt = Date()
+                try await save(me)
+                lastSaved = me
+                lastSavedAt = Date()
             }
             iCloudOK = true
             iCloudStatus = "올림 · 기기 \(allDevices.count)대 (내 기록 포함)"
