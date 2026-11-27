@@ -132,13 +132,31 @@ final class FrameConnection: @unchecked Sendable {
             case .ready:
                 self.onReady?()
                 self.readFrame()
-            case .failed(let e): self.close(e.localizedDescription)
-            case .waiting(let e): self.close(e.localizedDescription)
+            case .failed(let e), .waiting(let e): self.close(Self.describe(e))
             case .cancelled: self.close(nil)
             default: break
             }
         }
         conn.start(queue: queue)
+    }
+
+    /// 실패 이유 앞에 붙는 말: 저쪽에 아예 닿지 않았는지(길이 막힘), 닿았는데 암호화 손잡기에서 끊겼는지(키 · 버전이 다름)
+    static let unreachablePrefix = "연결 안 됨: "
+    static let handshakePrefix = "암호화 손잡기 실패: "
+
+    static func describe(_ e: NWError) -> String {
+        switch e {
+        case .tls: return handshakePrefix + e.localizedDescription
+        default: return unreachablePrefix + e.localizedDescription
+        }
+    }
+
+    /// 이 실패가 "길이 막힘" 인지 (닿았는데 손잡기 · 인사에서 끊긴 것은 아님). 옛 빌드 기록의 시간 초과도 막힘으로 본다
+    static func isUnreachable(_ reason: String?) -> Bool {
+        guard let r = reason else { return false }
+        if r.hasPrefix(unreachablePrefix) { return true }
+        if r.hasPrefix(handshakePrefix) { return false }
+        return r.contains("timed out") || r.contains("시간 초과") || r.contains("Connection refused") || r.contains("No route to host")
     }
 
     func send(_ m: SyncMessage) {

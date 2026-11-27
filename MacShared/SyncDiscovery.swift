@@ -639,7 +639,9 @@ final class SyncDiscovery: ObservableObject {
         if l.up { return (true, "\(peer.name) 이 붙음") }
         // 붙었다가 끊긴 것(앱 재시작 등)은 못 붙은 게 아니다. 붙어 본 적 없는 실패만 lastSeen 이 없다
         if l.lastSeen != nil { return (true, "\(peer.name) 이 붙은 적 있음") }
-        if fresh { return (false, "\(peer.name) 이 못 붙음: \(l.error ?? "")") }
+        // 닿았는데 손잡기 · 인사에서 끊긴 것(옛 빌드 · 키가 다름)은 길이 막힌 게 아니다
+        if fresh, FrameConnection.isUnreachable(l.error) { return (false, "\(peer.name) 이 못 붙음: \(l.error ?? "")") }
+        if fresh { return (nil, "\(peer.name) 이 닿았지만 손잡기 실패: \(l.error ?? "")") }
         return (nil, "오래전 실패라 다시 확인 필요")
     }
 
@@ -648,7 +650,7 @@ final class SyncDiscovery: ObservableObject {
         guard let l = me.links[peer.id], l.outgoing else { return (nil, "") }
         guard Self.link(l, isFor: peer) else { return (nil, "저쪽 주소가 바뀜") }
         if l.up || l.lastSeen != nil { return (true, "") }
-        if Date().timeIntervalSince(l.at) < Self.evidenceTTL { return (false, l.error ?? "") }
+        if Date().timeIntervalSince(l.at) < Self.evidenceTTL, FrameConnection.isUnreachable(l.error) { return (false, l.error ?? "") }
         return (nil, "")
     }
 

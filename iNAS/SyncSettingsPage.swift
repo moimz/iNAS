@@ -31,7 +31,7 @@ struct SyncSettingsPage: View {
                 }
                 LabeledContent("바깥 포트") {
                     VStack(alignment: .trailing, spacing: 2) {
-                        Text(me.port == 0 ? "—" : "\(me.publicIP):\(me.port)").textSelection(.enabled)
+                        Text(verbatim: me.port == 0 ? "—" : "\(me.publicIP):\(String(me.port))").textSelection(.enabled)
                         Text(me.portMethod).font(.caption).foregroundStyle(me.reachable ? Color.green : Color.orange)
                             .multilineTextAlignment(.trailing)
                     }
@@ -154,7 +154,7 @@ private struct PeerRow: View {
                 .menuIndicator(.hidden)
                 .fixedSize()
             }
-            Text("공인 \(d.publicIP.isEmpty ? "—" : d.publicIP):\(d.port) · 내부 \(d.localIP):\(d.internalPort) · \(d.portMethod)")
+            Text(verbatim: "공인 \(d.publicIP.isEmpty ? "—" : d.publicIP):\(String(d.port)) · 내부 \(d.localIP):\(String(d.internalPort)) · \(d.portMethod)")
                 .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             Text("\(d.os) · iNAS \(d.appVersion)\(peer.keyID.map { " · 키 \($0.prefix(12))" } ?? "")").font(.caption).foregroundStyle(.secondary)
             if !d.folders.isEmpty {
