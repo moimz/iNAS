@@ -196,7 +196,7 @@ final class SyncDiscovery: ObservableObject {
         }
         if !me.localIP.isEmpty, !DeviceInfo.isPrivate(me.localIP) {
             me.port = me.internalPort
-            me.portMethod = "공인 IP 바로 (공유기 없음)"
+            me.portMethod = "공인 IP 바로 (공유기 없음, 방화벽은 붙어 봐야 앎)"
             me.reachable = true
             return
         }
@@ -400,14 +400,57 @@ final class SyncDiscovery: ObservableObject {
             if case .dial(let h, let p, let v, _) = dial { return .dial(host: h, port: p, via: v, reason: r) }
             return dial
         }
-        switch (me.reachable, peer.reachable) {
-        case (false, true): return withReason("저쪽만 포트가 열림")
-        case (true, false): return .wait(reason: "나만 포트가 열림")
+        // 짐작(포트를 열었다/공인 IP 다)보다 실제로 붙어 본 결과가 먼저다
+        let meIn = inbound(from: peer)
+        let peerIn = outbound(to: peer)
+        let meOpen = meIn.evidence ?? me.reachable
+        let peerOpen = peerIn.evidence ?? peer.reachable
+        switch (meOpen, peerOpen) {
+        case (false, true):
+            return withReason(meIn.evidence == false ? "저쪽이 나에게 못 붙음" : "저쪽만 포트가 열림")
+        case (true, false):
+            return .wait(reason: peerIn.evidence == false ? "내가 저쪽에 못 붙음" : "나만 포트가 열림")
         case (true, true):
+            if meIn.evidence == true, peerIn.evidence != true { return .wait(reason: "저쪽이 나에게 붙은 적 있음") }
+            if peerIn.evidence == true, meIn.evidence != true { return withReason("내가 저쪽에 붙은 적 있음") }
             if iAmFirst { return withReason("둘 다 열림 · 내 차례") }
             return waitedTooLong(peer) ? withReason("저쪽이 안 붙어 와서") : .wait(reason: "둘 다 열림 · 저쪽 차례")
-        case (false, false): return .none(reason: "둘 다 포트를 못 열어 중계가 필요")
+        case (false, false):
+            return .none(reason: "둘 다 들어오는 연결이 막혀 중계가 필요")
         }
+    }
+
+    /// 이 정도 지난 실패는 잊고 다시 해 본다
+    static let evidenceTTL: TimeInterval = 10 * 60
+
+    /// 저쪽이 나에게 붙어 본 결과 (true 붙음, false 못 붙음, nil 모름) — 저쪽 기록과 지금 받은 연결로
+    func inbound(from peer: SyncDevice) -> (evidence: Bool?, text: String) {
+        if conns[peer.id] != nil, me.links[peer.id]?.outgoing == false { return (true, "\(peer.name) 이 붙어 와 있음") }
+        guard let l = peer.links[me.id], l.outgoing else { return (nil, "아직 아무도 붙어 보지 않음") }
+        if l.up { return (true, "\(peer.name) 이 붙음") }
+        if Date().timeIntervalSince(l.at) < Self.evidenceTTL { return (false, "\(peer.name) 이 못 붙음: \(l.error ?? "")") }
+        if l.since != nil || l.rtt != nil { return (true, "\(peer.name) 이 붙은 적 있음") }
+        return (nil, "오래전 실패")
+    }
+
+    /// 내가 저쪽에 붙어 본 결과
+    func outbound(to peer: SyncDevice) -> (evidence: Bool?, text: String) {
+        guard let l = me.links[peer.id], l.outgoing else {
+            if let l = peer.links[me.id], !l.outgoing, l.up { return (true, "저쪽이 받아 줌") }
+            return (nil, "")
+        }
+        if l.up { return (true, "") }
+        if Date().timeIntervalSince(l.at) < Self.evidenceTTL { return (false, l.error ?? "") }
+        return (nil, "")
+    }
+
+    /// 화면용: 바깥에서 나에게 붙을 수 있는지 — 다른 기기가 실제로 붙어 본 결과
+    var inboundSummary: (ok: Bool?, text: String) {
+        var results: [(Bool?, String)] = peers.map { inbound(from: $0) }.map { ($0.evidence, $0.text) }
+        results = results.filter { $0.0 != nil }
+        if let yes = results.first(where: { $0.0 == true }) { return (true, "확인됨 · \(yes.1)") }
+        if let no = results.first { return (false, "막힘 · \(no.1)") }
+        return (nil, "확인 전 (다른 기기가 붙어 봐야 앎)")
     }
 
     private func waitedTooLong(_ peer: SyncDevice) -> Bool {

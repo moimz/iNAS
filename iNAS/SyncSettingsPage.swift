@@ -24,6 +24,11 @@ struct SyncSettingsPage: View {
                             .multilineTextAlignment(.trailing)
                     }
                 }
+                LabeledContent("들어오는 연결") {
+                    let r = sync.inboundSummary
+                    Text(r.text).foregroundStyle(r.ok == true ? Color.green : (r.ok == false ? Color.red : Color.secondary))
+                        .multilineTextAlignment(.trailing)
+                }
                 LabeledContent("iCloud") {
                     Text(sync.iCloudStatus).foregroundStyle(sync.iCloudOK ? Color.secondary : Color.orange)
                         .multilineTextAlignment(.trailing)
