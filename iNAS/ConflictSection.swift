@@ -17,7 +17,7 @@ struct ConflictSection: View {
         var id: String { copy }
     }
 
-    private static let pattern = try! NSRegularExpression(pattern: #"\.sync-conflict-(\d{8})-(\d{6})-[0-9A-Fa-f]+"#)
+    private static let pattern = try! NSRegularExpression(pattern: #"\.sync-conflict-(\d{8})-(\d{6})-[0-9A-Za-z]+"#)
 
     static func parse(_ name: String) -> Item {
         let range = NSRange(name.startIndex..., in: name)
