@@ -443,6 +443,8 @@ final class SyncDiscovery: ObservableObject {
         guard Self.link(l, isFor: me) else { return (nil, "내 주소가 바뀌어 다시 확인 필요") }
         let fresh = Date().timeIntervalSince(l.at) < Self.evidenceTTL
         if l.up { return (true, "\(peer.name) 이 붙음") }
+        // 붙었다가 끊긴 것(앱 재시작 등)은 못 붙은 게 아니다. 붙어 본 적 없는 실패만 lastSeen 이 없다
+        if l.lastSeen != nil { return (true, "\(peer.name) 이 붙은 적 있음") }
         if fresh { return (false, "\(peer.name) 이 못 붙음: \(l.error ?? "")") }
         return (nil, "오래전 실패라 다시 확인 필요")
     }
@@ -451,7 +453,7 @@ final class SyncDiscovery: ObservableObject {
     func outbound(to peer: SyncDevice) -> (evidence: Bool?, text: String) {
         guard let l = me.links[peer.id], l.outgoing else { return (nil, "") }
         guard Self.link(l, isFor: peer) else { return (nil, "저쪽 주소가 바뀜") }
-        if l.up { return (true, "") }
+        if l.up || l.lastSeen != nil { return (true, "") }
         if Date().timeIntervalSince(l.at) < Self.evidenceTTL { return (false, l.error ?? "") }
         return (nil, "")
     }
@@ -471,6 +473,16 @@ final class SyncDiscovery: ObservableObject {
         if let yes = results.first(where: { $0.0 == true }) { return (true, "확인됨 · \(yes.1)") }
         if let no = results.first { return (false, "막힘 · \(no.1)") }
         return (nil, "확인 전 (다른 기기가 붙어 봐야 앎)")
+    }
+
+    static let waitGiveUp: TimeInterval = 3 * 60
+
+    private func fallbackTarget(_ peer: SyncDevice) -> (host: String, port: Int, via: String)? {
+        if !peer.publicIP.isEmpty, peer.publicIP == me.publicIP, !peer.localIP.isEmpty, peer.internalPort > 0 {
+            return (peer.localIP, peer.internalPort, "내부 \(peer.localIP):\(peer.internalPort)")
+        }
+        guard !peer.publicIP.isEmpty, peer.port > 0 else { return nil }
+        return (peer.publicIP, peer.port, "외부 \(peer.publicIP):\(peer.port)")
     }
 
     private func waitedTooLong(_ peer: SyncDevice) -> Bool {
@@ -494,6 +506,13 @@ final class SyncDiscovery: ObservableObject {
             }
             if case .dial(let host, let port, let via, _) = r, dialing[peer.id] == nil, (nextDial[peer.id] ?? .distantPast) <= now {
                 dial(peer, host: host, port: port, via: via)
+            } else if case .wait = r, let since = waitingSince[peer.id], now.timeIntervalSince(since) > Self.waitGiveUp,
+                      dialing[peer.id] == nil, (nextDial[peer.id] ?? .distantPast) <= now,
+                      let target = fallbackTarget(peer) {
+                // 서로 기다리는 일이 없게: 3분 넘게 안 붙어 오면 나도 붙어 본다
+                note("\(peer.name) 이 \(Int(Self.waitGiveUp / 60))분 넘게 안 붙어 와서 내가 붙어 봄")
+                waitingSince[peer.id] = now
+                dial(peer, host: target.host, port: target.port, via: target.via)
             }
         }
         for (id, c) in conns {
