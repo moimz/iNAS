@@ -250,7 +250,15 @@ private struct TransferTab: View {
     let summary: String
     let name: (String) -> String
 
-    private static func size(_ b: Int64) -> String { ByteCountFormatter.string(fromByteCount: b, countStyle: .file) }
+    /// 크기는 KB 부터 (647바이트 → 1KB, 0 → 0KB): "647바이트 / 647바이트" 처럼 길어지지 않게 (사용자 2026-11-29)
+    private static let sizeFormatter: ByteCountFormatter = {
+        let f = ByteCountFormatter()
+        f.countStyle = .file
+        f.allowedUnits = [.useKB, .useMB, .useGB, .useTB]
+        f.allowsNonnumericFormatting = false
+        return f
+    }()
+    private static func size(_ b: Int64) -> String { sizeFormatter.string(fromByteCount: b) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -281,13 +289,13 @@ private struct TransferTab: View {
                 TableColumn("진행") { r in
                     HStack(spacing: 8) {
                         ProgressBar(fraction: r.total > 0 ? min(1, Double(r.done) / Double(r.total)) : 0)
-                            .frame(width: 56, height: 6)
+                            .frame(width: 90, height: 6)
                         Spacer(minLength: 4)
                         Text(r.total > 0 ? "\(Self.size(r.done)) / \(Self.size(r.total))" : "지움")
                             .monospacedDigit().foregroundStyle(.secondary).lineLimit(1).fixedSize()
                     }
                 }
-                .width(min: 170, ideal: 180, max: 200)
+                .width(min: 210, ideal: 220, max: 240)
             }
         }
     }
