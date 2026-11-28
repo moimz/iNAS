@@ -30,10 +30,10 @@ struct FolderEditor: View {
         if s.state == .stopped || s.lastError != nil { return (.problem, "멈춤") }
         if s.state == .scanning { return (.syncing, "훑는 중") }
         if s.state == .syncing || s.needItems > 0 {
-            return (.syncing, s.needItems > 0 ? "받는 중 \(s.needItems.formatted())개" : "맞추는 중")
+            return (.syncing, s.needItems > 0 ? "받는 중 \(s.needItems.formatted())개" : "동기화 중")
         }
         if s.peerNeed.isEmpty { return (.waiting, "다른 Mac 을 기다림") }
-        return (.synced, "맞춰짐")
+        return (.synced, "동기화 완료")
     }
 
     /// 이 폴더를 쓰는 다른 Mac (iCloud 기록 + 지금 연결된 기기), 지운 기기는 빼고
@@ -49,7 +49,7 @@ struct FolderEditor: View {
         guard setting.enabled, setting.path != nil else { return (.waiting, "이 Mac 은 동기화 꺼짐" + last, nil) }
         guard let key = p.keyID, let s = status, let need = s.peerNeed[key] else { return (.offline, "연결 안 됨" + last, nil) }
         let count = s.peerFiles[key].map { FolderStatusLine.count(files: $0, bytes: s.peerBytes[key] ?? 0) }
-        return need == 0 ? (.synced, "맞춰짐", count) : (.syncing, "받는 중 \(need.formatted())개", count)
+        return need == 0 ? (.synced, "동기화 완료", count) : (.syncing, "받는 중 \(need.formatted())개", count)
     }
 
     var body: some View {

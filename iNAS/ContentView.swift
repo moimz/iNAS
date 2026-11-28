@@ -168,7 +168,7 @@ private struct FolderRow: View {
         return (path as NSString).abbreviatingWithTildeInPath
     }
 
-    /// 오른쪽 상태: 맞추는 중 · 문제 · 다 맞춰짐(초록 점) · 없음(꺼짐, 같이 쓰는 Mac 없음)
+    /// 오른쪽 상태: 동기화 중 · 문제 · 다 맞춰짐(초록 점) · 없음(꺼짐, 같이 쓰는 Mac 없음)
     private enum Mark { case none, syncing, problem, synced }
 
     private var mark: Mark {
@@ -200,10 +200,10 @@ private struct FolderRow: View {
                 Circle()
                     .fill(Color.green)
                     .frame(width: 8, height: 8)
-                    .help("맞춰짐")
+                    .help("동기화 완료")
             case .syncing:
                 ProminentIcon(name: "arrow.trianglehead.2.clockwise.rotate.90", color: Color.accentColor, rotating: true)
-                    .help(status.map { $0.needItems > 0 ? "맞추는 중 — 받을 것 \($0.needItems)개" : "맞추는 중" } ?? "맞추는 중")
+                    .help(status.map { $0.needItems > 0 ? "동기화 중 — 받을 것 \($0.needItems)개" : "동기화 중" } ?? "동기화 중")
             case .problem:
                 ProminentIcon(name: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90", color: Color.orange)
                     .help(status?.lastError ?? "동기화 멈춤")

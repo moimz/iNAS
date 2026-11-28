@@ -182,14 +182,14 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         guard let st else { return ("준비 중", .off) }
         if st.state == .stopped || st.lastError != nil { return ("멈춤" + (st.lastError.map { " — \($0)" } ?? ""), .problem) }
         if st.state == .syncing || st.needItems > 0 {
-            return (st.needItems > 0 ? "받는 중 \(st.needItems.formatted())개" : "맞추는 중", .busy)
+            return (st.needItems > 0 ? "받는 중 \(st.needItems.formatted())개" : "동기화 중", .busy)
         }
         let sending = st.peerNeed.values.reduce(0, +)
         if sending > 0 { return ("보내는 중 \(sending.formatted())개", .busy) }
         if st.state == .scanning { return ("훑는 중", .busy) }
         if !st.conflicts.isEmpty { return ("충돌 사본 \(st.conflicts.count.formatted())개", .problem) }
         if st.peerNeed.isEmpty { return ("다른 Mac 과 연결 안 됨", .offline) }
-        return ("맞춰짐", .ok)
+        return ("동기화 완료", .ok)
     }
 
     private func folderMenu(_ f: SyncFolder, _ st: SyncFolderStatus?, _ snap: SyncSnapshot, _ stateText: String) -> NSMenu {
@@ -237,7 +237,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
                 if need > 0 {
                     (text, mark) = ("받는 중 \(need.formatted())개", .busy)
                 } else if let n = st?.peerFiles[k] {
-                    (text, mark) = ("맞춰짐 · \(n.formatted())개", .ok)
+                    (text, mark) = ("동기화 완료 · \(n.formatted())개", .ok)
                 } else {
                     (text, mark) = ("연결됨", .busy)
                 }
