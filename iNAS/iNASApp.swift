@@ -38,7 +38,11 @@ struct INASApp: App {
                 .frame(minWidth: 720, minHeight: 520)
         }
         .windowResizability(.contentMinSize)
+        // 메뉴 막대에서 inas:// 로 부를 때 SwiftUI 가 이 창(장면)에 넘기며 다시 띄워 메인 창이 깜빡였다(사용자 2026-11-28, iRayer 와 같은 일).
+        // 주소는 AppDelegate.application(_:open:) 가 받으므로 장면은 받지 않는다 → 주소로 켜지면 메인 창을 아예 안 만든다
+        .handlesExternalEvents(matching: [])
         .commands {
+            DetailWindowOpener()
             // iNAS에 관하여: 기본 정보 창 그대로, 버전 줄만 Ai.md 모양 "2.3.1 (빌드 45 · 1231858)" (사용자 2026-11-26, iVNC 와 같게)
             CommandGroup(replacing: .appInfo) {
                 Button("iNAS에 관하여") {
@@ -67,6 +71,7 @@ struct INASApp: App {
             }
         }
         .defaultSize(width: 860, height: 560)
+        .handlesExternalEvents(matching: [])
         .commandsRemoved()
 
         // iNAS 설정 (⌘,): 일반(업데이트) · 서버(자동 연결) · 동기화(기기) · 기록(서버 · 동기화)
@@ -92,12 +97,30 @@ extension INASApp {
 
 /// 메뉴 막대에서 온 "이 폴더 상세 창을 열어 달라". 창을 여는 openWindow 는 뷰에만 있어서 메인 창(ContentView)이 받아 연다.
 /// 막 켜진 앱이면 뷰가 아직 없으니 pending 에 두고 뷰가 나타날 때 가져간다
+/// 상세 창을 여는 openWindow 를 메뉴(Commands) 쪽에서 잡아 둔다. 주소로 켜지면 메인 창이 없어 뷰에서는 못 연다(iRayer MacCommands 와 같은 방식)
+struct DetailWindowOpener: Commands {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        let _ = { [openWindow] in FolderDetailRequest.opener = { openWindow(id: "folderDetail", value: $0) } }()
+        CommandGroup(after: .windowArrangement) {}
+    }
+}
+
 @MainActor
 enum FolderDetailRequest {
+    /// DetailWindowOpener 가 넣어 둠
+    static var opener: ((FolderDetailTarget) -> Void)?
     static let notification = Notification.Name("iNAS.openFolderDetail")
     private(set) static var pending: (target: FolderDetailTarget, tab: Int)?
 
     static func post(_ target: FolderDetailTarget, tab: Int) {
+        if let opener {
+            // 이미 열린 창이면 그 창이 이 요청을 받아 탭을 바꾼다
+            UserDefaults.standard.set(target.key + "#\(tab)", forKey: FolderDetailView.tabRequestKey)
+            opener(target)
+            return
+        }
         pending = (target, tab)
         NotificationCenter.default.post(name: notification, object: nil)
     }
@@ -109,7 +132,6 @@ enum FolderDetailRequest {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let launchedAt = Date()
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
@@ -126,17 +148,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         guard urls.contains(where: { $0.scheme == "inas" && $0.host == "settings" }) else { return }
-        // 이 주소로 막 켜졌으면 SwiftUI 가 메인 창도 같이 띄우므로, 설정 창이 뜬 뒤 메인 창은 닫는다.
-        let justLaunched = Date().timeIntervalSince(launchedAt) < 5
-        DispatchQueue.main.async {
-            Self.openSettings()
-            guard justLaunched else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                for window in NSApp.windows where window.identifier?.rawValue.hasPrefix("main") == true {
-                    window.close()
-                }
-            }
-        }
+        // 메인 창은 주소를 받지 않으므로(handlesExternalEvents) 주소로 켜져도 메인 창이 안 생긴다. 예전엔 생긴 메인 창을 0.6초 뒤 닫아 깜빡였다
+        DispatchQueue.main.async { Self.openSettings() }
     }
 
     /// SwiftUI 가 만든 앱 메뉴의 "설정…"(⌘,)을 그대로 누른다.
