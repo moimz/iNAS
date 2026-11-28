@@ -109,12 +109,20 @@ final class SyncFolderStore: ObservableObject {
 
     /// 이 Mac 에서 켜고 로컬 폴더를 고른 폴더 → 엔진 설정
     func engineConfigs() -> [SyncFolderConfig] {
-        folders.compactMap { f in
+        var out: [SyncFolderConfig] = []
+        var taken: [String] = []  // 이미 넘긴 폴더의 실제 경로 (끝 "/")
+        for f in folders {
             let s = setting(f.id)
-            guard s.enabled, let path = resolvedPath(f.id) else { return nil }
-            return SyncFolderConfig(id: f.id, name: f.name, path: path, ignores: f.ignores,
-                                    rescanInterval: TimeInterval((s.rescanMinutes ?? 60) * 60))
+            guard s.enabled, let path = resolvedPath(f.id) else { continue }
+            // 겹치는 로컬 폴더는 고를 때 막지만, 예전에 이미 겹쳐 둔 것이 있으면 앞의 것만 돌린다
+            let real = SyncFolderIndex.realPath(path)
+            let key = real.hasSuffix("/") ? real : real + "/"
+            if taken.contains(where: { key.hasPrefix($0) || $0.hasPrefix(key) }) { continue }
+            taken.append(key)
+            out.append(SyncFolderConfig(id: f.id, name: f.name, path: path, ignores: f.ignores,
+                                        rescanInterval: TimeInterval((s.rescanMinutes ?? 60) * 60)))
         }
+        return out
     }
 
     /// 이 Mac 에서 켠 폴더가 있는지 (에이전트를 늘 띄워야 하는지)
@@ -194,14 +202,61 @@ final class SyncFolderStore: ObservableObject {
     }
 
     func setEnabled(_ id: String, _ on: Bool) {
+        // 켤 때: 꺼 둔 사이 다른 동기화 폴더가 같은 로컬 폴더를 가져갔으면 켜지 않고 다른 폴더를 고르게 한다
+        if on, let path = resolvedPath(id), let hit = overlap(path, except: id) {
+            let alert = overlapAlert(path, hit)
+            alert.addButton(withTitle: "다른 폴더 고르기…")
+            alert.addButton(withTitle: "취소")
+            objectWillChange.send()  // 스위치를 꺼진 채로 되돌려 그린다
+            if alert.runModal() == .alertFirstButtonReturn { chooseLocalFolder(id, enableAfter: true) }
+            return
+        }
         var s = setting(id)
         s.enabled = on
         local[id] = s
         saveLocal()
     }
 
+    // MARK: 로컬 폴더 겹침 (사용자 2026-11-28: 막는다. Syncthing 은 경고만)
+
+    enum Overlap { case same, inside, contains }
+
+    /// 이 Mac 에서 다른 동기화 폴더(꺼진 것도)가 쓰는 로컬 폴더와 같거나, 그 안이거나, 그것을 품는지
+    func overlap(_ path: String, except id: String) -> (name: String, kind: Overlap)? {
+        let mine = SyncFolderIndex.realPath(path)
+        let me = mine.hasSuffix("/") ? mine : mine + "/"
+        for (otherID, s) in local where otherID != id {
+            guard let f = folder(otherID), let p = resolvedPath(otherID) ?? s.path else { continue }
+            let other = SyncFolderIndex.realPath(p)
+            let o = other.hasSuffix("/") ? other : other + "/"
+            if me == o { return (f.name, .same) }
+            if me.hasPrefix(o) { return (f.name, .inside) }
+            if o.hasPrefix(me) { return (f.name, .contains) }
+        }
+        return nil
+    }
+
+    private func overlapAlert(_ path: String, _ hit: (name: String, kind: Overlap)) -> NSAlert {
+        let base = (path as NSString).lastPathComponent
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        switch hit.kind {
+        case .same: alert.messageText = "「\(base)」 폴더는 동기화 폴더 「\(hit.name)」에서 이미 쓰고 있습니다"
+        case .inside: alert.messageText = "「\(base)」 폴더는 동기화 폴더 「\(hit.name)」이 쓰는 폴더 안에 있습니다"
+        case .contains: alert.messageText = "「\(base)」 폴더 안에 동기화 폴더 「\(hit.name)」이 쓰는 폴더가 있습니다"
+        }
+        alert.informativeText = """
+        한 폴더를 두 동기화 폴더가 같이 맡으면 지우기 · 고치기가 양쪽으로 퍼지고 파일 목록이 엉킵니다. \
+        다른 폴더를 고르거나, 「\(hit.name)」의 로컬 폴더를 먼저 바꾸거나 그 폴더를 지우세요. \
+        (「\(hit.name)」이 이 Mac 에서 꺼져 있어도 로컬 폴더가 정해져 있으면 막습니다.)
+        """
+        return alert
+    }
+
     /// 로컬 폴더 고르기 (NSOpenPanel). 비어 있지 않으면 경고하고 다시 고를 수 있게 한다.
-    func chooseLocalFolder(_ id: String) {
+    /// enableAfter: 고르면 동기화도 켠다 (켜려다 겹쳐서 다시 고를 때). 골랐으면 true
+    @discardableResult
+    func chooseLocalFolder(_ id: String, enableAfter: Bool = false) -> Bool {
         var start = setting(id).path.map { URL(fileURLWithPath: $0) }
         while true {
             let panel = NSOpenPanel()
@@ -212,19 +267,29 @@ final class SyncFolderStore: ObservableObject {
             panel.prompt = "선택"
             panel.message = "\(folder(id)?.name ?? "폴더") 와 동기화할 이 Mac 의 폴더를 고르세요."
             if let start { panel.directoryURL = start }
-            guard panel.runModal() == .OK, let url = panel.url else { return }
+            guard panel.runModal() == .OK, let url = panel.url else { return false }
+            // 다른 동기화 폴더가 쓰는 폴더와 겹치면 못 고른다
+            if let hit = overlap(url.path, except: id) {
+                let alert = overlapAlert(url.path, hit)
+                alert.addButton(withTitle: "다른 폴더 고르기")
+                alert.addButton(withTitle: "취소")
+                guard alert.runModal() == .alertFirstButtonReturn else { return false }
+                start = url.deletingLastPathComponent()
+                continue
+            }
             switch confirmNonEmpty(url) {
             case .use:
                 var s = setting(id)
                 s.path = url.path
                 s.bookmark = try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
+                if enableAfter { s.enabled = true }
                 local[id] = s
                 saveLocal()
-                return
+                return true
             case .chooseAgain:
                 start = url.deletingLastPathComponent()
             case .cancel:
-                return
+                return false
             }
         }
     }
