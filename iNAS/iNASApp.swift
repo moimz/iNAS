@@ -114,12 +114,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     /// `inas://settings` — 메뉴 막대(iNASAgent)의 "iNAS 설정…". 설정 창만 띄운다.
-    /// `inas://detail/<폴더 아이디>?tab=N` — 메뉴 막대 폴더의 "상세보기…" · "충돌 사본 관리…". 그 폴더 상세 창을 연다.
+    /// `inas://detail/<폴더 아이디>?tab=N[&peer=<키 아이디>]` — 메뉴 막대 폴더의 기기 줄 · "충돌 사본 관리…". 그 폴더(그 기기) 상세 창을 연다.
     func application(_ application: NSApplication, open urls: [URL]) {
         if let url = urls.first(where: { $0.scheme == "inas" && $0.host == "detail" }),
            let id = url.pathComponents.dropFirst().first {
-            let tab = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "tab" }?.value.flatMap(Int.init) ?? 0
-            FolderDetailRequest.post(FolderDetailTarget(folderID: id, peer: nil), tab: tab)
+            let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            let tab = items.first { $0.name == "tab" }?.value.flatMap(Int.init) ?? 0
+            let peer = items.first { $0.name == "peer" }?.value.flatMap { $0.isEmpty ? nil : $0 }
+            FolderDetailRequest.post(FolderDetailTarget(folderID: id, peer: peer), tab: tab)
             NSApp.activate()
             return
         }

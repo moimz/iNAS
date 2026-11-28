@@ -121,7 +121,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             case .ok: inner = Self.dot(.systemGreen)
             case .offline: inner = Self.dot(.systemRed)
             case .off: inner = Self.dot(.systemGray)
-            case .busy: inner = Self.symbol("arrow.triangle.2.circlepath", .systemBlue)
+            // 파랑이면 마우스를 올린 줄(파란 강조)에서 안 보여서 글자 색(다크 흰색 · 라이트 검정)으로 (사용자 2026-11-28)
+            case .busy: inner = Self.symbol("arrow.triangle.2.circlepath", .labelColor)
             case .problem: inner = Self.symbol("exclamationmark.arrow.triangle.2.circlepath", .systemOrange)
             }
             guard let inner else { return nil }
@@ -138,7 +139,10 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             NSGraphicsContext.saveGraphicsState()
             NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
             let s = inner.size
-            inner.draw(in: NSRect(x: (pt - s.width) / 2, y: (pt - s.height) / 2, width: s.width, height: s.height))
+            // labelColor 같은 색이 지금 다크/라이트 모양으로 풀리게 (메뉴를 열 때마다 다시 그린다)
+            NSApp.effectiveAppearance.performAsCurrentDrawingAppearance {
+                inner.draw(in: NSRect(x: (pt - s.width) / 2, y: (pt - s.height) / 2, width: s.width, height: s.height))
+            }
             NSGraphicsContext.restoreGraphicsState()
             let image = NSImage(size: NSSize(width: pt, height: pt))
             image.addRepresentation(rep)
@@ -200,10 +204,6 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         m.autoenablesItems = false
         m.addItem(NSMenuItem.sectionHeader(title: stateText))
 
-        let detail = NSMenuItem(title: "상세보기…", action: #selector(openDetail(_:)), keyEquivalent: "")
-        detail.target = self
-        detail.representedObject = "\(f.id)?tab=0"
-        m.addItem(detail)
         if let n = st?.conflicts.count, n > 0, on {
             let c = NSMenuItem(title: "충돌 사본 \(n.formatted())개 관리…", action: #selector(openDetail(_:)), keyEquivalent: "")
             c.target = self
@@ -224,10 +224,12 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             m.addItem(rescan)
         }
 
-        // 이 폴더를 쓰는 기기: 이 Mac · 다른 Mac 마다 한 줄 (보기만)
+        // 이 폴더를 쓰는 기기: 이 Mac · 다른 Mac 마다 한 줄. 누르면 그 기기의 상세 창 (사용자 2026-11-28: 따로 "상세보기…" 대신)
         m.addItem(.separator())
         let me = on ? (st.map { "\($0.localFiles.formatted())개 · \(Self.size($0.localBytes))" } ?? "준비 중") : "꺼짐"
-        m.addItem(pair(snap.me.name, me, mark: on ? (st == nil ? .off : .ok) : .off))
+        let mine = pair(snap.me.name, me, mark: on ? (st == nil ? .off : .ok) : .off)
+        if on { link(mine, "\(f.id)?tab=0") }
+        m.addItem(mine)
         for p in snap.peers where p.blockedKey == nil {
             let uses = p.device.folders[f.id] != nil || (p.keyID.map { st?.peerNeed[$0] != nil } ?? false)
             guard uses else { continue }
@@ -245,7 +247,9 @@ final class StatusMenu: NSObject, NSMenuDelegate {
                 let last = p.device.folders[f.id]?.lastSync.map { " · 마지막 동기화 \(Self.stamp($0))" } ?? ""
                 (text, mark) = ("연결 안 됨" + last, .offline)
             }
-            m.addItem(pair(p.device.name, text, mark: mark))
+            let row = pair(p.device.name, text, mark: mark)
+            if on, let k = p.keyID { link(row, "\(f.id)?tab=0&peer=\(k)") }
+            m.addItem(row)
         }
         tightenPairs(m)
         return m
@@ -308,6 +312,14 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     }
 
     // MARK: 줄 모양
+
+    /// 보기만 하던 줄을 누를 수 있게: 상세 창 열기
+    private func link(_ item: NSMenuItem, _ detail: String) {
+        item.isEnabled = true
+        item.target = self
+        item.action = #selector(openDetail(_:))
+        item.representedObject = detail
+    }
 
     /// 보기만 하는 줄: 왼쪽 이름 · 오른쪽 끝에 맞춘 자세한 글 (사용자 2026-11-28)
     private func pair(_ name: String, _ detail: String, mark: Mark?) -> NSMenuItem {
