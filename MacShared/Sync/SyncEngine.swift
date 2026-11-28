@@ -17,6 +17,9 @@ struct SyncFolderStatus: Codable, Equatable {
     var sharedWith: [String] = []
     /// 그 기기가 받을 항목 수 (기기 아이디 → 수)
     var peerNeed: [String: Int] = [:]
+    /// 그 기기 파일 수 · 크기 (첫 파일 목록을 받은 뒤부터)
+    var peerFiles: [String: Int] = [:]
+    var peerBytes: [String: Int64] = [:]
     var lastError: String?
     var lastSync: Date?
     /// 충돌 사본 (이름에 .sync-conflict- 가 든 파일, 폴더 기준 경로, 최대 500개)
@@ -618,7 +621,8 @@ actor SyncEngine {
         s.needItems = needs.count
         s.needBytes = needs.reduce(0) { $0 + ($1.file.deleted ? 0 : $1.file.size) }
         let live = f.files.values.filter { !$0.deleted }
-        s.localFiles = live.count
+        // 파일 수는 폴더를 빼고 센다 (다른 Mac 의 수와 같은 기준)
+        s.localFiles = live.filter { $0.kind != .directory }.count
         s.localBytes = live.reduce(0) { $0 + $1.size }
         // iNAS 기기(나 · 믿는 기기)가 만든 사본만. Syncthing 이 남긴 사본(끝이 Syncthing 기기 아이디)은 우리 충돌이 아니라 빼고 보여 준다
         let mine = Set(([identity.shortID] + peers.values.map(\.shortID)).map { SyncFolderIndex.conflictTag($0) })
@@ -626,10 +630,19 @@ actor SyncEngine {
             .map(\.name).sorted().prefix(500))
         s.sharedWith = connected.values.filter { $0.folders.contains(id) }.map(\.peer.name).sorted()
         var peerNeed: [String: Int] = [:]
+        var peerFiles: [String: Int] = [:]
+        var peerBytes: [String: Int64] = [:]
         for p in connected.values where p.folders.contains(id) {
             peerNeed[p.peer.keyID] = peerNeeds(f, p.peer.keyID)
+            if let list = f.remote[p.peer.keyID] {
+                let theirs = list.values.filter { !$0.deleted && $0.kind != .directory }
+                peerFiles[p.peer.keyID] = theirs.count
+                peerBytes[p.peer.keyID] = theirs.reduce(0) { $0 + $1.size }
+            }
         }
         s.peerNeed = peerNeed
+        s.peerFiles = peerFiles
+        s.peerBytes = peerBytes
         if s.state != .stopped { s.state = needs.isEmpty ? .idle : .syncing }
         // 멈춤에서 풀려나면(표시 파일이 돌아옴 등) 멈춘 이유도 지운다 (남아 있으면 폴더 줄에 문제 아이콘이 계속 뜸)
         if f.stopReason == nil, s.state == .stopped {

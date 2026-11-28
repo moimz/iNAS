@@ -71,18 +71,6 @@ private struct DeviceSection: View {
     var onRemove: () -> Void = {}
     var onRestore: (String) -> Void = { _ in }
 
-    /// 기기 종류 → SF 기호
-    static func symbol(_ d: SyncDevice) -> String {
-        let m = d.model + " " + d.modelID
-        if m.contains("MacBook") { return "macbook" }
-        if m.contains("Mac mini") { return "macmini" }
-        if m.contains("Mac Studio") { return "macstudio" }
-        if m.contains("Mac Pro") { return "macpro.gen3" }
-        if m.contains("iPhone") { return "iphone" }
-        if m.contains("iPad") { return "ipad" }
-        return "desktopcomputer"
-    }
-
     /// 키 아이디 앞 16자리를 4자리씩
     static func fingerprint(_ keyID: String) -> String {
         let c = Array(keyID.prefix(16))
@@ -134,7 +122,7 @@ private struct DeviceSection: View {
             }
         } header: {
             HStack(spacing: 6) {
-                Image(systemName: Self.symbol(device))
+                Image(systemName: device.symbolName)
                 Text(device.name)
                 if isMe { Text("(이 기기)").foregroundStyle(.secondary) }
                 Spacer()

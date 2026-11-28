@@ -11,13 +11,34 @@ struct FolderEditor: View {
 
     private var setting: LocalFolderSetting { folders.setting(folderID) }
 
-    /// 키 아이디 → 기기 이름
-    private var peerNames: [String: String] {
-        var out: [String: String] = [:]
-        for p in agent.sync?.peers ?? [] {
-            if let k = p.keyID { out[k] = p.device.name }
+    private var status: SyncFolderStatus? { agent.sync?.folderStatus[folderID] }
+
+    /// 이 Mac 의 상태
+    private var myState: (kind: SyncStateSymbol.Kind, text: String) {
+        guard let s = status else { return (.waiting, "준비 중") }
+        if s.state == .stopped || s.lastError != nil { return (.problem, "멈춤") }
+        if s.state == .scanning { return (.syncing, "훑는 중") }
+        if s.state == .syncing || s.needItems > 0 {
+            return (.syncing, s.needItems > 0 ? "받는 중 \(s.needItems.formatted())개" : "맞추는 중")
         }
-        return out
+        if s.peerNeed.isEmpty { return (.waiting, "다른 Mac 을 기다림") }
+        return (.synced, "맞춰짐")
+    }
+
+    /// 이 폴더를 쓰는 다른 Mac (iCloud 기록 + 지금 연결된 기기), 지운 기기는 빼고
+    private var otherDevices: [SyncSnapshot.Peer] {
+        let connected = Set(status?.peerNeed.keys.map { $0 } ?? [])
+        return (agent.sync?.peers ?? []).filter { p in
+            p.blockedKey == nil && (p.device.folders[folderID] != nil || p.keyID.map { connected.contains($0) } == true)
+        }
+    }
+
+    private func peerState(_ p: SyncSnapshot.Peer) -> (kind: SyncStateSymbol.Kind, text: String, count: String?) {
+        let last = p.device.folders[folderID]?.lastSync.map { " · 마지막 동기화 \($0.shortStamp)" } ?? ""
+        guard setting.enabled, setting.path != nil else { return (.waiting, "이 Mac 은 동기화 꺼짐" + last, nil) }
+        guard let key = p.keyID, let s = status, let need = s.peerNeed[key] else { return (.offline, "연결 안 됨" + last, nil) }
+        let count = s.peerFiles[key].map { FolderStatusLine.count(files: $0, bytes: s.peerBytes[key] ?? 0) }
+        return need == 0 ? (.synced, "맞춰짐", count) : (.syncing, "받는 중 \(need.formatted())개", count)
     }
 
     var body: some View {
@@ -78,13 +99,28 @@ struct FolderEditor: View {
                         }
                     }
                     if setting.path != nil {
-                        FolderStatusRows(status: agent.sync?.folderStatus[folderID], peerNames: peerNames)
+                        let st = myState
+                        FolderStatusLine(kind: st.kind, text: st.text,
+                                         count: status.map { FolderStatusLine.count(files: $0.localFiles, bytes: $0.localBytes) })
+                        if let e = status?.lastError {
+                            Text(e).foregroundStyle(.red).textSelection(.enabled)
+                        }
                     }
                 }
             } header: {
-                Text("이 Mac (\(DeviceInfo.computerName))")
+                DeviceSectionTitle(symbol: agent.sync?.me.symbolName ?? "desktopcomputer", name: DeviceInfo.computerName, isMe: true)
             } footer: {
                 Text("이 설정은 이 Mac 에만 저장됩니다. 파일은 iCloud 를 거치지 않고, 같은 iCloud 계정의 Mac 끼리 암호화 연결로 바로 주고받습니다.")
+            }
+
+            // 이 폴더를 쓰는 다른 Mac: iCloud 기기 기록(folders)에 이 폴더가 있거나 지금 이 폴더로 연결된 기기
+            ForEach(otherDevices) { peer in
+                Section {
+                    let st = peerState(peer)
+                    FolderStatusLine(kind: st.kind, text: st.text, count: st.count)
+                } header: {
+                    DeviceSectionTitle(symbol: peer.device.symbolName, name: peer.device.name)
+                }
             }
 
             if setting.enabled, let root = folders.resolvedPath(folderID),
@@ -107,61 +143,6 @@ struct FolderEditor: View {
         .onChange(of: folders.folder(folderID)?.name) { _, new in
             // 다른 Mac 에서 바꾼 이름이 들어오면 (내가 고치는 중이 아닐 때) 반영
             if let new, new != name { name = new }
-        }
-    }
-}
-
-/// 폴더 동기화 상태 줄들
-private struct FolderStatusRows: View {
-    let status: SyncFolderStatus?
-    let peerNames: [String: String]
-
-    private func size(_ b: Int64) -> String { ByteCountFormatter.string(fromByteCount: b, countStyle: .file) }
-
-    var body: some View {
-        if let s = status {
-            LabeledContent("상태") {
-                Text(stateText(s)).foregroundStyle(stateColor(s))
-            }
-            LabeledContent("이 Mac", value: "\(s.localFiles.formatted())개 · \(size(s.localBytes))")
-            if s.peerNeed.isEmpty {
-                LabeledContent("같이 쓰는 기기", value: "연결된 기기 없음")
-            } else {
-                ForEach(s.peerNeed.keys.sorted(), id: \.self) { key in
-                    let n = s.peerNeed[key] ?? 0
-                    LabeledContent(peerNames[key] ?? "다른 Mac") {
-                        Text(n == 0 ? "맞춰짐" : "받을 것 \(n.formatted())개").foregroundStyle(n == 0 ? Color.green : Color.orange)
-                    }
-                }
-            }
-            if let last = s.lastSync {
-                LabeledContent("마지막 동기화", value: last.formatted(date: .abbreviated, time: .standard))
-            }
-            if let e = s.lastError {
-                Text(e).foregroundStyle(.red).textSelection(.enabled)
-            }
-        } else {
-            LabeledContent("상태", value: "준비 중")
-        }
-    }
-
-    private func stateText(_ s: SyncFolderStatus) -> String {
-        switch s.state {
-        case .stopped: return "멈춤"
-        case .scanning: return "훑는 중"
-        case .syncing: return "받는 중 — \(s.needItems.formatted())개 · \(size(s.needBytes))"
-        case .waiting: return "준비 중"
-        case .idle:
-            if s.peerNeed.isEmpty { return "다른 Mac 을 기다림" }
-            return s.peerNeed.values.allSatisfy { $0 == 0 } ? "맞춰짐" : "보내는 중"
-        }
-    }
-
-    private func stateColor(_ s: SyncFolderStatus) -> Color {
-        switch s.state {
-        case .stopped: return .red
-        case .idle: return s.peerNeed.isEmpty ? .secondary : (s.peerNeed.values.allSatisfy { $0 == 0 } ? .green : .orange)
-        default: return .orange
         }
     }
 }
