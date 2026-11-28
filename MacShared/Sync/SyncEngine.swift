@@ -139,8 +139,10 @@ actor SyncEngine {
     /// 폴더가 iCloud 에서 지워졌을 때: 이 Mac 의 파일 목록 파일(folder-<id>.plist)을 지우고, 아직 돌던 일이 다시 저장하지 않게 한다.
     /// 끄기(configure 에서 빠짐)와 달리 다시 켤 일이 없으니 목록을 남길 까닭이 없다
     func forget(_ folderID: String) {
+        let name = (folders[folderID] ?? retired[folderID])?.config.name
         folders[folderID]?.discard = true
         retired.removeValue(forKey: folderID)?.discard = true
+        log("「\(name ?? folderID)」 폴더가 지워져 이 Mac 에서 동기화를 그만둠 (파일은 그대로 둠)")
         try? FileManager.default.removeItem(at: SyncFolderIndex.stateURL(stateDir: stateDir, folderID: folderID))
         peerDetails = peerDetails.filter { !$0.key.hasSuffix("|" + folderID) }
     }
@@ -346,9 +348,8 @@ actor SyncEngine {
 
     private func serve(_ r: SyncMessage.Request, to p: Peer) {
         func fail(_ e: String) { p.conn.send(.response(.init(id: r.id, data: nil, error: e))) }
-        guard p.folders.contains(r.folder), let f = folders[r.folder], let file = f.files[r.name], !file.deleted, file.kind == .file else {
-            return fail("없는 파일")
-        }
+        guard p.folders.contains(r.folder), let f = folders[r.folder] else { return fail("이 폴더를 더는 동기화하지 않음") }
+        guard let file = f.files[r.name], !file.deleted, file.kind == .file else { return fail("없는 파일") }
         guard let h = try? FileHandle(forReadingFrom: f.url(of: r.name)) else { return fail("열 수 없음") }
         defer { try? h.close() }
         guard (try? h.seek(toOffset: UInt64(r.offset))) != nil, let data = try? h.read(upToCount: Int(r.size)), data.count == Int(r.size) else {
@@ -604,6 +605,12 @@ actor SyncEngine {
                     detail.record(id, [SyncFolderDetail.Change(date: Date(), path: g.name, action: action, origin: .peer(from))])
                 }
             } catch {
+                // 받는 사이 이 폴더를 그만뒀으면(이쪽이 끄거나 지움 · 저쪽이 그만둠) 실패가 아니라 멈춘 것
+                let stoppedHere = folders[id] !== f
+                if stoppedHere || connected[from]?.folders.contains(id) == false {
+                    log("\(f.config.name) / \(g.name) 받기 멈춤 — \(stoppedHere ? "이 Mac" : (connected[from]?.peer.name ?? "저쪽")) 에서 이 폴더 동기화를 그만둠")
+                    break
+                }
                 errors += 1
                 status[id]?.lastError = "\(g.name): \(error.localizedDescription)"
                 log("\(f.config.name) / \(g.name) 받기 실패: \(error.localizedDescription)")
