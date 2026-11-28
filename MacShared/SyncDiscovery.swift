@@ -153,7 +153,11 @@ final class SyncDiscovery: ObservableObject {
             .appendingPathComponent("com.moimz.iNAS/sync", isDirectory: true)
         var noteBox: (@Sendable (String) -> Void)?
         engine = SyncEngine(identity: identity, name: DeviceInfo.computerName, stateDir: stateDir, log: { line in noteBox?(line) })
-        noteBox = { [weak self] line in Task { @MainActor in self?.note(line) } }
+        // 엔진의 "○○ 와 연결" 은 이쪽 "붙음 / 붙어 옴" 과 같은 일이라 한 줄만 남긴다
+        noteBox = { [weak self] line in
+            if line.contains(" 와 연결 (") { return }
+            Task { @MainActor in self?.note(line) }
+        }
         me.publicKey = identity.publicKey.rawRepresentation.base64EncodedString()
         // 지난번 기기 목록으로 시작 (iCloud 를 받으면 바뀐다)
         if let data = Prefs.defaults.data(forKey: Self.peerCacheKey), let cached = try? JSONDecoder().decode([SyncDevice].self, from: data) {
@@ -207,7 +211,8 @@ final class SyncDiscovery: ObservableObject {
         do {
             let r = try await STUN.publicAddress()
             if r.ip != me.publicIP {
-                note("공인 IP \(r.ip) (STUN \(r.server))")
+                // 처음 알아낸 것은 남기지 않고, 바뀌었을 때만
+                if !me.publicIP.isEmpty { note("공인 IP 가 \(me.publicIP) → \(r.ip) 로 바뀜") }
                 if !me.publicIP.isEmpty {
                     note("공인 IP 가 바뀌어 붙어 본 기록을 지움")
                     networkChanged()
@@ -251,7 +256,8 @@ final class SyncDiscovery: ObservableObject {
                 }
                 listener = l
                 listenerKeys = keys
-                if listenerPort != port { note("TCP \(port) 에서 대기 중 (암호화, 기기 \(keys.count)대의 키)") }
+                if listenerPort != 0, listenerPort != port { note("대기 포트가 \(listenerPort) → \(port) 로 바뀜") }
+                Log.app.info("sync: TCP \(port) 에서 대기 (기기 \(keys.count)대의 키)")
                 listenerPort = port
                 me.internalPort = Int(port)
                 listenStatus = "TCP \(port) 에서 대기 중 (암호화)"
@@ -406,7 +412,7 @@ final class SyncDiscovery: ObservableObject {
         do {
             if gateway == nil {
                 gateway = try await UPnP.findGateway()
-                note("공유기 찾음: \(gateway!.name)")
+                Log.app.info("sync: 공유기 찾음 \(self.gateway!.name, privacy: .public)")
             }
             guard let gw = gateway else { return }
             let wan = try await UPnP.externalIP(gw)
@@ -425,7 +431,7 @@ final class SyncDiscovery: ObservableObject {
                 } catch { lastError = error }
             }
             guard let ext = opened else { throw lastError ?? NetError("빈 바깥 포트가 없음") }
-            if mappedExternal != ext { note("공유기 포트 열기: 바깥 \(ext) → \(me.localIP):\(me.internalPort)") }
+            if let old = mappedExternal, old != ext { note("공유기 바깥 포트가 \(old) → \(ext) 로 바뀜") }
             mappedExternal = ext
             me.port = Int(ext)
             var method = "UPnP (\(gw.name))"
@@ -441,7 +447,8 @@ final class SyncDiscovery: ObservableObject {
             me.port = me.internalPort
             me.reachable = false
             let text = "열지 못함: \(error.localizedDescription)"
-            if me.portMethod != text { note("포트 \(text)") }
+            // 원래 못 여는 곳(회사망 등)에서 뜰 때마다 남기지 않게: 열려 있다가 못 열게 됐을 때만
+            if me.portMethod.hasPrefix("UPnP") { note("공유기 포트를 더 이상 열지 못함: \(error.localizedDescription)") }
             me.portMethod = text
         }
     }
@@ -735,7 +742,7 @@ final class SyncDiscovery: ObservableObject {
             Task {
                 let error = await Self.tcpProbe(host: target.host, port: target.port)
                 var l = me.links[id] ?? SyncLinkInfo(up: false, outgoing: false, via: "", at: Date())
-                if l.probeOK != (error == nil) || l.probeVia != target.via {
+                if let before = l.probeOK, before != (error == nil) || l.probeVia != target.via {
                     note("\(peer.name) 접속 떠보기 — \(target.via): \(error == nil ? "됨" : "안 됨 (\(error!))")")
                 }
                 l.probeOK = error == nil
@@ -865,7 +872,6 @@ final class SyncDiscovery: ObservableObject {
             outgoingKeys.remove(key)
             guard let id = deviceID(forKey: key) else { continue }
             nextDial[id] = Date().addingTimeInterval(3)
-            note("\(old.name) 연결 끊김")
             setLink(id, SyncLinkInfo(up: false, outgoing: out, via: me.links[id]?.via ?? old.remote, since: nil,
                                      lastSeen: old.lastSeen, rtt: nil, error: "끊김", at: Date()))
         }

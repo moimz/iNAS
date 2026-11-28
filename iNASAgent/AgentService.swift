@@ -256,7 +256,8 @@ final class AgentService: NSObject {
 
         switch trigger {
         case .start:
-            if missing.isEmpty { record(.info, "시작: 공유가 모두 연결돼 있습니다") }
+            // 다 붙어 있으면(할 일 없음) 남기지 않는다. 끊김 · 다시 연결 · 실패만 남긴다 (사용자 2026-11-28)
+            break
         case .wake, .network:
             if !missing.isEmpty { record(.info, "\(trigger.label): 빠진 공유 감지 — \(missing.joined(separator: ", "))") }
         case .manual:
@@ -490,7 +491,8 @@ private enum EventStore {
         guard let url, let data = try? Data(contentsOf: url),
               let events = try? JSONDecoder().decode([AgentEvent].self, from: data)
         else { return [] }
-        return events
+        // 예전 빌드가 뜰 때마다 남기던 "할 일 없음" 줄은 걸러 낸다
+        return events.filter { $0.text != "시작: 공유가 모두 연결돼 있습니다" }
     }
 
     static func save(_ events: [AgentEvent]) {
