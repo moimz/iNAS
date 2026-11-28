@@ -350,10 +350,15 @@ actor SyncEngine {
         let total = (sent[r.folder]?[key]?[r.name] ?? 0) + Int64(data.count)
         sent[r.folder, default: [:]][key, default: [:]][r.name] = total
         sendingNow[r.folder, default: [:]][key] = (r.name, Date())
+        // 도는 표시는 지금 보내는 파일 하나에만 (전에 보낸 줄은 끈다)
         detail.update(r.folder) { d in
-            if let i = d.send.firstIndex(where: { $0.peer == key && $0.path == r.name }) {
-                d.send[i].done = total
-                d.send[i].active = true
+            for i in d.send.indices where d.send[i].peer == key {
+                if d.send[i].path == r.name {
+                    d.send[i].done = total
+                    d.send[i].active = true
+                } else if d.send[i].active {
+                    d.send[i].active = false
+                }
             }
         }
     }
@@ -551,6 +556,11 @@ actor SyncEngine {
         var done: [SyncFile] = []
         var rescans: [String] = []
         var errors = 0
+        // 받은 것은 다 끝날 때까지 모으지 않고 1초(또는 500개)마다 알린다 — 보낸 쪽 "보내기" 줄과 남은 개수가 받는 대로 줄게
+        // (Syncthing 도 받는 동안 목록을 계속 보낸다). 목록 파일 저장은 10초마다
+        var unsent: [SyncFile] = []
+        var lastBroadcast = Date()
+        var lastSave = Date()
         // 내 블록 찾기표 (같은 내용이면 저쪽에 안 묻고 내 파일에서 복사)
         var localBlocks: [Data: (String, Int64)] = [:]
         for (n, lf) in f.files where !lf.deleted && lf.kind == .file {
@@ -574,7 +584,7 @@ actor SyncEngine {
                 case (false, .file): changedNames = try await pullFile(f, g, from: p, localBlocks: localBlocks)
                 }
                 rescans += changedNames
-                if let rec = f.files[g.name] { done.append(rec) }
+                if let rec = f.files[g.name] { done.append(rec); unsent.append(rec) }
                 if g.kind != .directory {
                     let action: SyncFolderDetail.Change.Action = g.deleted ? .deleted : ((before == nil || before!.deleted) ? .added : .modified)
                     detail.record(id, [SyncFolderDetail.Change(date: Date(), path: g.name, action: action, origin: .peer(from))])
@@ -586,11 +596,17 @@ actor SyncEngine {
             }
             status[id]?.needItems -= 1
             if done.count % 200 == 0 { publish() }
+            if !unsent.isEmpty, unsent.count >= 500 || Date().timeIntervalSince(lastBroadcast) >= 1 {
+                if Date().timeIntervalSince(lastSave) >= 10 { f.save(); lastSave = Date() }
+                broadcast(id, unsent)
+                unsent = []
+                lastBroadcast = Date()
+            }
         }
         pullingNow[id] = nil
         refreshReceive(f, f.needed().filter { connected[$0.from] != nil })
         f.save()
-        broadcast(id, done)
+        broadcast(id, unsent)
         if errors == 0 { status[id]?.lastError = nil }
         status[id]?.lastSync = Date()
         if !rescans.isEmpty { requestScan(id, rescans) }
