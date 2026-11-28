@@ -133,10 +133,23 @@ actor SyncEngine {
 
     // MARK: 설정
 
+    /// 꺼서 빠진 폴더 (지워졌다는 forget 이 오면 그 뒤 저장을 막으려고 잠깐 들고 있는다)
+    private var retired: [String: SyncFolderIndex] = [:]
+
+    /// 폴더가 iCloud 에서 지워졌을 때: 이 Mac 의 파일 목록 파일(folder-<id>.plist)을 지우고, 아직 돌던 일이 다시 저장하지 않게 한다.
+    /// 끄기(configure 에서 빠짐)와 달리 다시 켤 일이 없으니 목록을 남길 까닭이 없다
+    func forget(_ folderID: String) {
+        folders[folderID]?.discard = true
+        retired.removeValue(forKey: folderID)?.discard = true
+        try? FileManager.default.removeItem(at: SyncFolderIndex.stateURL(stateDir: stateDir, folderID: folderID))
+        peerDetails = peerDetails.filter { !$0.key.hasSuffix("|" + folderID) }
+    }
+
     /// 이 기기에서 켜진 폴더들 (경로가 있는 것만)
     func configure(folders configs: [SyncFolderConfig]) {
         let ids = Set(configs.map(\.id))
         for id in folders.keys where !ids.contains(id) {
+            retired[id] = folders[id]
             folders[id] = nil
             status[id] = nil
             detail.remove(id)
@@ -148,6 +161,7 @@ actor SyncEngine {
                 f.update(config: c)
                 if pathChanged || ignoresChanged { requestScan(c.id, nil) }
             } else {
+                retired[c.id] = nil
                 folders[c.id] = SyncFolderIndex(config: c, me: identity.shortID, stateDir: stateDir)
                 status[c.id] = SyncFolderStatus()
                 requestScan(c.id, nil)

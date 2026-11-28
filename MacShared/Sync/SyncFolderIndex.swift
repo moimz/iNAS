@@ -38,11 +38,15 @@ final class SyncFolderIndex {
 
     var root: URL { URL(fileURLWithPath: config.path, isDirectory: true) }
 
+    static func stateURL(stateDir: URL, folderID: String) -> URL {
+        stateDir.appendingPathComponent("folder-\(folderID).plist")
+    }
+
     init(config: SyncFolderConfig, me: ShortID, stateDir: URL) {
         self.config = config
         self.me = me
         self.ignore = SyncIgnore(config.ignores)
-        stateURL = stateDir.appendingPathComponent("folder-\(config.id).plist")
+        stateURL = Self.stateURL(stateDir: stateDir, folderID: config.id)
         if let data = try? Data(contentsOf: stateURL), let s = try? PropertyListDecoder().decode(Saved.self, from: data) {
             files = s.files
             meta = s.meta
@@ -55,7 +59,11 @@ final class SyncFolderIndex {
         config = c
     }
 
+    /// 폴더를 지웠으면 true: 그 뒤 늦게 끝난 일이 목록 파일을 다시 만들지 않게
+    var discard = false
+
     func save() {
+        guard !discard else { return }
         guard let data = try? PropertyListEncoder().encode(Saved(files: files, meta: meta, sequence: sequence)) else { return }
         try? FileManager.default.createDirectory(at: stateURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: stateURL, options: .atomic)
@@ -73,7 +81,7 @@ final class SyncFolderIndex {
         let marker = root.appendingPathComponent(Self.markerName)
         if !FileManager.default.fileExists(atPath: marker.path) {
             if files.isEmpty {
-                FileManager.default.createFile(atPath: marker.path, contents: Data("iNAS 동기화 폴더 표시 — 지우지 마세요\n".utf8))
+                FileManager.default.createFile(atPath: marker.path, contents: Data(Self.markerText.utf8))
             } else {
                 stopReason = "폴더 표시 파일(\(Self.markerName))이 없어 멈췄습니다. 디스크가 빠졌거나 폴더가 바뀌었을 수 있습니다."
                 return false
@@ -81,6 +89,18 @@ final class SyncFolderIndex {
         }
         stopReason = nil
         return true
+    }
+
+    static let markerText = "iNAS 동기화 폴더 표시 — 지우지 마세요\n"
+
+    /// 폴더를 지울 때 표시 파일을 치운다. 우리가 만든 것(내용이 같음)만 지운다. 지웠으면 true
+    @discardableResult
+    static func removeMarker(in folderPath: String) -> Bool {
+        let u = URL(fileURLWithPath: folderPath).appendingPathComponent(markerName)
+        guard let d = FileManager.default.contents(atPath: u.path), String(decoding: d, as: UTF8.self).hasPrefix("iNAS 동기화 폴더 표시") else {
+            return false
+        }
+        return (try? FileManager.default.removeItem(at: u)) != nil
     }
 
     static func isInternal(_ name: String) -> Bool {

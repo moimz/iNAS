@@ -177,7 +177,30 @@ final class SyncFolderStore: ObservableObject {
     }
 
     /// 모든 Mac 에서 지운다 (각 Mac 의 로컬 폴더 내용은 건드리지 않는다)
+    /// iCloud 에서 지워진 폴더를 알았을 때 (에이전트가 목록 파일을 지운다)
+    var onFolderDeleted: ((String) -> Void)?
+
+    /// 지운 폴더의 이 Mac 찌꺼기: 로컬 폴더의 표시 파일(다른 동기화 폴더가 같은 곳을 쓰면 남김) · 이 Mac 설정
+    private func cleanUpDeleted(_ id: String) {
+        if let path = resolvedPath(id) ?? local[id]?.path {
+            let real = SyncFolderIndex.realPath(path)
+            let shared = local.contains { otherID, s in
+                otherID != id && folder(otherID) != nil
+                    && (resolvedPath(otherID) ?? s.path).map { SyncFolderIndex.realPath($0) == real } == true
+            }
+            if !shared, SyncFolderIndex.removeMarker(in: path) {
+                Log.app.info("folders: 지운 폴더 \(id, privacy: .public) 의 표시 파일을 치움")
+            }
+        }
+        if local[id] != nil, !readOnly {
+            local[id] = nil
+            saveLocal()
+        }
+        onFolderDeleted?(id)
+    }
+
     func delete(_ id: String) {
+        cleanUpDeleted(id)
         folders.removeAll { $0.id == id }
         local[id] = nil
         pendingEdits[id] = nil
@@ -377,6 +400,7 @@ final class SyncFolderStore: ObservableObject {
                 for d in r.deletions where d.recordType == Self.recordType {
                     let id = d.recordID.recordName
                     if folders.contains(where: { $0.id == id }) {
+                        cleanUpDeleted(id)
                         folders.removeAll { $0.id == id }
                         changed = true
                     }

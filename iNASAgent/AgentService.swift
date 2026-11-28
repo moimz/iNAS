@@ -124,6 +124,11 @@ final class AgentService: NSObject {
 
     private func startSync() {
         sync.start()
+        // 폴더가 iCloud 에서 지워지면 이 Mac 의 목록 파일도 지운다 (표시 파일 · 설정은 SyncFolderStore 가)
+        folders.onFolderDeleted = { [weak self] id in
+            guard let self else { return }
+            Task { await self.sync.engine.forget(id) }
+        }
         folders.start()
         Publishers.CombineLatest(folders.$folders, folders.$local)
             .receive(on: RunLoop.main)
