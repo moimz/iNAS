@@ -102,7 +102,7 @@ struct ContentView: View {
                         ServerRowIcon(enabled: server.enabled)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(server.displayName)
-                            Text(server.shares.isEmpty ? "선택한 공유 없음" : "공유 \(server.shares.count)개")
+                            Text(server.shares.isEmpty ? "선택한 공유폴더 없음" : "공유폴더 \(server.shares.count)개")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -220,7 +220,7 @@ struct ConnectionDot: View {
             Circle()
                 .fill(mounted == total ? Color.green : Color.orange)
                 .frame(width: 8, height: 8)
-                .help(mounted == total ? "공유 \(total)개 모두 연결됨" : "공유 \(total)개 중 \(mounted)개 연결됨")
+                .help(mounted == total ? "공유폴더 \(total)개 모두 연결됨" : "공유폴더 \(total)개 중 \(mounted)개 연결됨")
         }
     }
 }

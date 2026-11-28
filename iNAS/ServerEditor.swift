@@ -54,7 +54,7 @@ struct ServerEditor: View {
                 TextField("표시 이름", text: $draft.name, prompt: Text("예: 집 NAS"))
                 TextField("주소", text: $draft.host, prompt: Text("nas.example.com"))
                 TextField("포트", text: $portText, prompt: Text("445 (기본값)"))
-                Toggle("자동 연결에 포함", isOn: $draft.enabled)
+                Toggle("자동 연결", isOn: $draft.enabled)
             }
 
             Section {
@@ -71,26 +71,14 @@ struct ServerEditor: View {
             }
 
             Section {
-                HStack {
-                    Button {
-                        Task { await testConnection() }
-                    } label: {
-                        Text("접속 시험")
-                    }
-                    .disabled(!canTest || isTesting)
-                    if isTesting {
-                        ProgressView().controlSize(.small)
-                    }
-                    if let testMessage {
-                        Label(testMessage, systemImage: testSucceeded ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                            .foregroundStyle(testSucceeded ? .green : .orange)
-                            .font(.callout)
-                            .textSelection(.enabled)
-                    }
+                if let testMessage {
+                    Label(testMessage, systemImage: testSucceeded ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .foregroundStyle(testSucceeded ? .green : .orange)
+                        .textSelection(.enabled)
                 }
 
                 if shareChoices.isEmpty {
-                    Text("접속 시험을 눌러 공유 목록을 가져오세요.")
+                    Text("접속하여 공유폴더 불러오기를 누르면 서버의 공유폴더 목록을 가져옵니다.")
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(shareChoices, id: \.self) { share in
@@ -110,15 +98,23 @@ struct ServerEditor: View {
                 }
 
                 HStack {
-                    TextField("공유 이름 직접 추가", text: $manualShare)
+                    TextField("공유폴더 직접 추가", text: $manualShare)
                         .onSubmit(addManualShare)
                     Button("추가", action: addManualShare)
                         .disabled(manualShare.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             } header: {
-                Text("자동 연결할 공유")
+                HStack {
+                    Text("공유 폴더 설정")
+                    Spacer()
+                    if isTesting { ProgressView().controlSize(.small) }
+                    Button("접속하여 공유폴더 불러오기") {
+                        Task { await testConnection() }
+                    }
+                    .disabled(!canTest || isTesting)
+                }
             } footer: {
-                Text("체크한 공유만 연결합니다 (지금 연결 · 자동 연결).")
+                Text("선택한 공유폴더만 자동으로 연결합니다.")
             }
         }
         .formStyle(.grouped)
@@ -188,9 +184,9 @@ struct ServerEditor: View {
         } else if result?.state == .missingPassword {
             Label("키체인에 비밀번호가 없습니다.", systemImage: "key").foregroundStyle(.orange)
         } else if let failures = result?.failures, failures > 0 {
-            Label("공유 \(failures)개를 연결하지 못했습니다.", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+            Label("공유폴더 \(failures)개를 연결하지 못했습니다.", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
         } else if total > 0 {
-            Text(mounted == total ? "공유 \(total)개 모두 연결됨" : "공유 \(total)개 중 \(mounted)개 연결됨")
+            Text(mounted == total ? "공유폴더 \(total)개 모두 연결됨" : "공유폴더 \(total)개 중 \(mounted)개 연결됨")
                 .foregroundStyle(.secondary)
         }
     }
@@ -248,7 +244,7 @@ struct ServerEditor: View {
             let shares = try await SMBShareLister.listShares(host: d.host, port: d.port, username: d.username, password: pw)
             fetchedShares = shares
             testSucceeded = true
-            testMessage = "접속 성공 — 공유 \(shares.count)개"
+            testMessage = "접속 성공 — 공유폴더 \(shares.count)개"
             // 접속에 성공한 비밀번호는 바로 키체인에 저장한다.
             if !password.isEmpty {
                 save()

@@ -27,8 +27,8 @@ enum Notifier {
         guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else { return }
 
         var lines: [String] = []
-        if mounted > 0 { lines.append("공유 \(mounted)개를 연결했습니다.") }
-        if failed > 0 { lines.append("공유 \(failed)개는 연결하지 못했습니다.") }
+        if mounted > 0 { lines.append("공유폴더 \(mounted)개를 연결했습니다.") }
+        if failed > 0 { lines.append("공유폴더 \(failed)개는 연결하지 못했습니다.") }
         if !noPassword.isEmpty { lines.append("비밀번호가 없는 서버: \(noPassword.joined(separator: ", "))") }
 
         let content = UNMutableNotificationContent()
