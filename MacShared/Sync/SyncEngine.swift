@@ -24,6 +24,8 @@ struct SyncFolderStatus: Codable, Equatable {
     var lastSync: Date?
     /// 충돌 사본 (이름에 .sync-conflict- 가 든 파일, 폴더 기준 경로, 최대 500개)
     var conflicts: [String] = []
+    /// 충돌 사본 이름 끝 기기 표시 → 기기 이름 (상세 창 "만든 기기")
+    var conflictDevices: [String: String] = [:]
 }
 
 /// 기기 연결 상태 (화면 · SyncDiscovery 용)
@@ -261,6 +263,15 @@ actor SyncEngine {
             if let c = p.pending.removeValue(forKey: r.id) {
                 if let d = r.data { c.resume(returning: d) } else { c.resume(throwing: SyncError(r.error ?? "받기 실패")) }
             }
+        case .detailAsk(let folder):
+            guard folders[folder] != nil, p.folders.contains(folder) else { return }
+            fc.send(.detailReply(.init(folder: folder, detail: detail.get(folder).encoded())))
+        case .detailReply(let r):
+            guard p.folders.contains(r.folder), let d = SyncFolderDetail.decode(r.detail) else { return }
+            peerDetails[p.peer.keyID + "|" + r.folder] = d
+        case .rescanAsk(let folder):
+            guard folders[folder] != nil, p.folders.contains(folder) else { return }
+            requestScan(folder, nil)
         case .ping:
             fc.send(.pong)
         case .pong:
@@ -383,6 +394,29 @@ actor SyncEngine {
 
     /// 상세 창 정보 (훑는 중에도 바로)
     nonisolated func folderDetail(_ folderID: String) -> SyncFolderDetail { detail.get(folderID) }
+
+    /// 다른 Mac 의 폴더 상세: 마지막으로 받은 것을 돌려주고, 그 Mac 에 새로 달라고 한다(0.8초에 한 번까지).
+    /// 연결이 없거나 그 Mac 이 이 폴더를 안 쓰면 nil
+    private var peerDetails: [String: SyncFolderDetail] = [:]
+    private var peerDetailAsked: [String: Date] = [:]
+    func peerDetail(_ folderID: String, peer keyID: String) -> SyncFolderDetail? {
+        let k = keyID + "|" + folderID
+        guard let p = connected[keyID], p.folders.contains(folderID) else {
+            peerDetails[k] = nil
+            return nil
+        }
+        if peerDetailAsked[k].map({ Date().timeIntervalSince($0) > 0.8 }) ?? true {
+            peerDetailAsked[k] = Date()
+            p.conn.send(.detailAsk(folderID))
+        }
+        return peerDetails[k] ?? SyncFolderDetail.waiting
+    }
+
+    /// 다른 Mac 에 이 폴더를 지금 전체 재탐색해 달라고
+    func askPeerRescan(_ folderID: String, peer keyID: String) {
+        guard let p = connected[keyID], p.folders.contains(folderID) else { return }
+        p.conn.send(.rescanAsk(folderID))
+    }
 
     /// 폴더마다 재탐색 간격이 되면 전체를 다시 훑는다 (30초마다 확인, 앱 쪽에서 한 번 시작)
     private var rescanLoopStarted = false
@@ -745,7 +779,10 @@ actor SyncEngine {
         s.localFiles = live.filter { $0.kind != .directory }.count
         s.localBytes = live.reduce(0) { $0 + $1.size }
         // iNAS 기기(나 · 믿는 기기)가 만든 사본만. Syncthing 이 남긴 사본(끝이 Syncthing 기기 아이디)은 우리 충돌이 아니라 빼고 보여 준다
-        let mine = Set(([identity.shortID] + peers.values.map(\.shortID)).map { SyncFolderIndex.conflictTag($0) })
+        var tags = [SyncFolderIndex.conflictTag(identity.shortID): name]
+        for p in peers.values { tags[SyncFolderIndex.conflictTag(p.shortID)] = p.name }
+        s.conflictDevices = tags
+        let mine = Set(tags.keys)
         s.conflicts = Array(live.filter { $0.kind == .file && SyncFolderIndex.isConflict($0.name) && mine.contains(SyncFolderIndex.conflictTagOf($0.name) ?? "") }
             .map(\.name).sorted().prefix(500))
         s.sharedWith = connected.values.filter { $0.folders.contains(id) }.map(\.peer.name).sorted()

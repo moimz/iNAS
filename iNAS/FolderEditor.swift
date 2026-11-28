@@ -10,6 +10,15 @@ struct FolderEditor: View {
     let onDelete: () -> Void
     @State private var name = ""
     @State private var ignores = ""
+    @Environment(\.openWindow) private var openWindow
+    @AppStorage(FolderDetailView.tabRequestKey) private var tabRequest = ""
+
+    /// 상세 창을 열며 이 탭을 보여 달라 (이미 열린 창이면 그 창이 받아 탭을 바꾼다)
+    private func openDetail(tab: Int) {
+        let target = FolderDetailTarget(folderID: folderID, peer: nil)
+        tabRequest = target.key + "#\(tab)"
+        openWindow(id: "folderDetail", value: target)
+    }
 
     private var setting: LocalFolderSetting { folders.setting(folderID) }
 
@@ -112,6 +121,16 @@ struct FolderEditor: View {
                         let st = myState
                         FolderStatusLine(folderID: folderID, kind: st.kind, text: st.text,
                                          count: status.map { FolderStatusLine.count(files: $0.localFiles, bytes: $0.localBytes) })
+                        // 충돌 사본은 상세 창 "충돌" 탭에서 관리 (여기는 있다는 것만)
+                        if let n = status?.conflicts.count, n > 0 {
+                            LabeledContent("충돌 사본") {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                                    Text("\(n.formatted())개").lineLimit(1).fixedSize()
+                                    Button("관리…") { openDetail(tab: FolderDetailView.conflictTab) }
+                                }
+                            }
+                        }
                         if let e = status?.lastError {
                             Text(e).foregroundStyle(.red).textSelection(.enabled)
                         }
@@ -127,16 +146,12 @@ struct FolderEditor: View {
             ForEach(otherDevices) { peer in
                 Section {
                     let st = peerState(peer)
-                    FolderStatusLine(folderID: folderID, kind: st.kind, text: st.text, count: st.count)
+                    FolderStatusLine(folderID: folderID, peer: peer.keyID, kind: st.kind, text: st.text, count: st.count)
                 } header: {
                     DeviceSectionTitle(symbol: peer.device.symbolName, name: peer.device.name)
                 }
             }
 
-            if setting.enabled, let root = folders.resolvedPath(folderID),
-               let conflicts = agent.sync?.folderStatus[folderID]?.conflicts, !conflicts.isEmpty {
-                ConflictSection(root: root, conflicts: conflicts)
-            }
 
         }
         .formStyle(.grouped)

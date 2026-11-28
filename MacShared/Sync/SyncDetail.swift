@@ -56,6 +56,10 @@ struct SyncFolderDetail: Codable, Equatable {
     var sendCount = 0
     var sendBytes: Int64 = 0
 
+    /// 다른 Mac 에 달라고 하고 아직 답을 못 받음
+    var waiting = false
+    static var waiting: SyncFolderDetail { var d = SyncFolderDetail(); d.waiting = true; return d }
+
     static let changeLimit = 1000
     static let rowLimit = 500
 

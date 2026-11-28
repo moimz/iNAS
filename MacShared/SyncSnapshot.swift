@@ -63,6 +63,8 @@ enum SyncCommand: Codable {
     case restoreDevice(String)
     /// 이 폴더를 지금 전체 재탐색
     case rescan(String)
+    /// 다른 Mac 에 이 폴더 전체 재탐색을 부탁 (폴더, 키 아이디)
+    case rescanPeer(String, String)
 
     static func decode(_ data: Data) -> SyncCommand? { try? JSONDecoder().decode(SyncCommand.self, from: data) }
     func encoded() -> Data { (try? JSONEncoder().encode(self)) ?? Data() }

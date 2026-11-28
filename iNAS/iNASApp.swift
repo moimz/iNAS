@@ -59,9 +59,9 @@ struct INASApp: App {
         }
 
         // 폴더 상세 (탐색 · 받기 · 보내기): 폴더마다 창 하나
-        WindowGroup("폴더 상세", id: "folderDetail", for: String.self) { $id in
-            if let id {
-                FolderDetailView(folderID: id)
+        WindowGroup("폴더 상세", id: "folderDetail", for: FolderDetailTarget.self) { $target in
+            if let target {
+                FolderDetailView(target: target)
                     .environmentObject(model.folders)
                     .environmentObject(model.agent)
             }

@@ -60,12 +60,12 @@ final class AgentClient: ObservableObject {
         proxy()?.syncCommand(c.encoded())
     }
 
-    /// 폴더 상세 창 정보 (창이 열려 있는 동안 1초마다)
-    func folderDetail(_ folderID: String) async -> SyncFolderDetail? {
+    /// 폴더 상세 창 정보 (창이 열려 있는 동안 1초마다). peer 가 있으면 그 Mac 에 달라고 해서 (연결 없으면 nil)
+    func folderDetail(_ folderID: String, peer: String? = nil) async -> SyncFolderDetail? {
         guard let p = proxy() else { return nil }
         return await withCheckedContinuation { cont in
             let once = Once()
-            p.fetchFolderDetail(folderID) { data in once.run { cont.resume(returning: SyncFolderDetail.decode(data)) } }
+            p.fetchFolderDetail(folderID, peer: peer ?? "") { data in once.run { cont.resume(returning: SyncFolderDetail.decode(data)) } }
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { once.run { cont.resume(returning: nil) } }
         }
     }

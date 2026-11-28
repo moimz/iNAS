@@ -53,6 +53,8 @@ struct SyncStateSymbol: View {
 /// "상태" 줄: [기호] 글 · 파일 수 [상세보기]
 struct FolderStatusLine: View {
     let folderID: String
+    /// 다른 Mac 칸이면 그 기기 키 아이디 (상세 창이 그 Mac 에 달라고 한다)
+    var peer: String? = nil
     let kind: SyncStateSymbol.Kind
     let text: String
     let count: String?
@@ -68,7 +70,7 @@ struct FolderStatusLine: View {
                     Text(count).foregroundStyle(.secondary).monospacedDigit().lineLimit(1).fixedSize()
                 }
                 // 별도 창 (시트는 macOS 26 에서 창 가운데 떠서, 사용자 2026-11-28)
-                Button("상세보기") { openWindow(id: "folderDetail", value: folderID) }
+                Button("상세보기") { openWindow(id: "folderDetail", value: FolderDetailTarget(folderID: folderID, peer: peer)) }
             }
         }
     }

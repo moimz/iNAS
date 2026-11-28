@@ -148,6 +148,7 @@ final class AgentService: NSObject {
         case .removeDevice(let id): Task { await sync.removeDevice(id) }
         case .restoreDevice(let key): Task { await sync.restoreDevice(key) }
         case .rescan(let id): Task { await sync.engine.requestScan(id, nil) }
+        case .rescanPeer(let id, let peer): Task { await sync.engine.askPeerRescan(id, peer: peer) }
         }
     }
 
@@ -470,9 +471,16 @@ private final class AgentExport: NSObject, INASAgentProtocol {
         }
     }
 
-    func fetchFolderDetail(_ folderID: String, reply: @escaping (Data) -> Void) {
+    func fetchFolderDetail(_ folderID: String, peer: String, reply: @escaping (Data) -> Void) {
         DispatchQueue.main.async {
-            MainActor.assumeIsolated { reply(AgentService.shared.sync.engine.folderDetail(folderID).encoded()) }
+            MainActor.assumeIsolated {
+                let engine = AgentService.shared.sync.engine
+                if peer.isEmpty {
+                    reply(engine.folderDetail(folderID).encoded())
+                } else {
+                    Task { reply(await engine.peerDetail(folderID, peer: peer)?.encoded() ?? Data()) }
+                }
+            }
         }
     }
 

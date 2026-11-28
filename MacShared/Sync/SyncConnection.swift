@@ -95,6 +95,12 @@ enum SyncMessage: Codable {
         var error: String?
     }
 
+    /// 상세 창: 다른 Mac 이 보는 폴더 상세 (SyncFolderDetail JSON)
+    struct DetailReply: Codable {
+        var folder: String
+        var detail: Data
+    }
+
     case hello(Hello)
     case index(Index)
     case request(Request)
@@ -102,6 +108,11 @@ enum SyncMessage: Codable {
     case folders([String])
     case ping
     case pong
+    /// 이 폴더 상세를 보내 달라 (상세 창이 열린 동안 1초마다)
+    case detailAsk(String)
+    case detailReply(DetailReply)
+    /// 이 폴더를 지금 전체 재탐색해 달라 (상세 창 [지금 재탐색])
+    case rescanAsk(String)
 }
 
 /// 길이(4바이트) + 표시(1바이트, 1 = lzfse 압축) + binary plist
