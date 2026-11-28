@@ -269,13 +269,29 @@ private struct TransferTab: View {
                 .width(min: 70, ideal: 100, max: 160)
                 TableColumn("진행") { r in
                     HStack(spacing: 8) {
-                        ProgressView(value: r.total > 0 ? min(1, Double(r.done) / Double(r.total)) : 0)
-                            .frame(width: 80)
+                        ProgressBar(fraction: r.total > 0 ? min(1, Double(r.done) / Double(r.total)) : 0)
+                            .frame(width: 80, height: 6)
                         Text(r.total > 0 ? "\(Self.size(r.done)) / \(Self.size(r.total))" : "지움")
                             .monospacedDigit().foregroundStyle(.secondary).lineLimit(1).fixedSize()
                     }
                 }
                 .width(min: 200, ideal: 230)
+            }
+        }
+    }
+}
+
+/// 진행 막대. 표(Table) 줄은 다시 쓰여서 ProgressView 는 값이 바뀌어도 막대가 안 바뀌는 일이 있어 직접 그린다
+/// (보내기 탭 "20KB / 20KB" 인데 막대가 거의 빈 채로 보임, 빌드 95)
+private struct ProgressBar: View {
+    let fraction: Double
+
+    var body: some View {
+        GeometryReader { g in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.secondary.opacity(0.25))
+                Capsule().fill(Color.accentColor)
+                    .frame(width: max(0, min(1, fraction)) * g.size.width)
             }
         }
     }
