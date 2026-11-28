@@ -22,6 +22,7 @@ struct ContentView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var store: ServerStore
     @EnvironmentObject private var folders: SyncFolderStore
+    @EnvironmentObject private var agent: AgentClient
     @State private var selection: SidebarItem?
     @State private var deleteServer: ServerConfig?
     @State private var deleteFolder: SyncFolder?
@@ -118,7 +119,7 @@ struct ContentView: View {
             if !folders.folders.isEmpty {
                 Section("폴더") {
                     ForEach(folders.folders) { folder in
-                        FolderRow(folder: folder, setting: folders.setting(folder.id))
+                        FolderRow(folder: folder, setting: folders.setting(folder.id), status: agent.sync?.folderStatus[folder.id])
                             .tag(SidebarItem.folder(folder.id))
                             .contextMenu {
                                 Button("폴더 삭제…") { deleteFolder = folder }
@@ -148,7 +149,7 @@ struct ContentView: View {
 private struct FolderRow: View {
     let folder: SyncFolder
     let setting: LocalFolderSetting
-    @Environment(\.backgroundProminence) private var prominence
+    let status: SyncFolderStatus?
 
     private var detail: String {
         guard setting.enabled else { return "이 Mac 에서 꺼짐" }
@@ -156,10 +157,22 @@ private struct FolderRow: View {
         return (path as NSString).abbreviatingWithTildeInPath
     }
 
+    /// 오른쪽 상태: 맞추는 중 · 문제 · 다 맞춰짐(초록 점) · 없음(꺼짐, 같이 쓰는 Mac 없음)
+    private enum Mark { case none, syncing, problem, synced }
+
+    private var mark: Mark {
+        guard setting.enabled, setting.path != nil, let s = status else { return .none }
+        if s.state == .stopped || s.lastError != nil { return .problem }
+        if s.state == .syncing || s.state == .scanning || s.needItems > 0 || s.peerNeed.values.contains(where: { $0 > 0 }) {
+            return .syncing
+        }
+        return s.peerNeed.isEmpty ? .none : .synced
+    }
+
     var body: some View {
         HStack {
-            Image(systemName: setting.enabled ? "folder.fill" : "folder")
-                .foregroundStyle(prominence == .increased ? Color.white : (setting.enabled ? Color.accentColor : Color.secondary))
+            // 고른 줄의 흰색 바꿈은 아이콘 뷰 안에서 읽어야 먹는다(줄 맨 바깥에서 읽으면 강조 값이 안 들어옴, 서버 줄 ServerRowIcon 과 같게)
+            ProminentIcon(name: "folder.and.person", color: setting.enabled ? Color.accentColor : Color.secondary)
             VStack(alignment: .leading, spacing: 1) {
                 Text(folder.name.isEmpty ? "이름 없음" : folder.name)
                 Text(detail)
@@ -168,7 +181,37 @@ private struct FolderRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
+            Spacer()
+            switch mark {
+            case .none:
+                EmptyView()
+            case .synced:
+                Circle()
+                    .fill(Color.green)
+                    .frame(width: 8, height: 8)
+                    .help("맞춰짐")
+            case .syncing:
+                ProminentIcon(name: "arrow.trianglehead.2.clockwise.rotate.90", color: Color.accentColor, rotating: true)
+                    .help(status.map { $0.needItems > 0 ? "맞추는 중 — 받을 것 \($0.needItems)개" : "맞추는 중" } ?? "맞추는 중")
+            case .problem:
+                ProminentIcon(name: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90", color: Color.orange)
+                    .help(status?.lastError ?? "동기화 멈춤")
+            }
         }
+    }
+}
+
+/// 사이드바 줄 아이콘: 고른 줄(강조색 배경)이면 흰색으로
+private struct ProminentIcon: View {
+    let name: String
+    let color: Color
+    var rotating = false
+    @Environment(\.backgroundProminence) private var prominence
+
+    var body: some View {
+        Image(systemName: name)
+            .foregroundStyle(prominence == .increased ? Color.white : color)
+            .symbolEffect(.rotate, options: .repeat(.continuous), isActive: rotating)
     }
 }
 

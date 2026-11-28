@@ -71,6 +71,8 @@ actor SyncEngine {
     private var again: Set<String> = []
     private var pendingScan: [String: Set<String>?] = [:]  // nil = 전체
     private var status: [String: SyncFolderStatus] = [:]
+    /// 폴더가 멈춘 이유 (풀려나면 lastError 에서 지우려고 기억)
+    private var stopReasons: [String: String] = [:]
 
     init(identity: SyncIdentity, name: String, stateDir: URL, log: @escaping @Sendable (String) -> Void) {
         self.identity = identity
@@ -388,8 +390,13 @@ actor SyncEngine {
         if let reason = f.stopReason {
             status[id]?.state = .stopped
             status[id]?.lastError = reason
+            stopReasons[id] = reason
             publish()
             return
+        }
+        // 멈춤에서 풀려났으면 멈춘 이유를 지운다 (남아 있으면 폴더 줄에 문제 아이콘이 계속 뜸)
+        if let old = stopReasons.removeValue(forKey: id), status[id]?.lastError == old {
+            status[id]?.lastError = nil
         }
         await pull(f)
         updateStatus(f)
@@ -624,7 +631,11 @@ actor SyncEngine {
         }
         s.peerNeed = peerNeed
         if s.state != .stopped { s.state = needs.isEmpty ? .idle : .syncing }
-        if f.stopReason == nil, s.state == .stopped { s.state = .idle }
+        // 멈춤에서 풀려나면(표시 파일이 돌아옴 등) 멈춘 이유도 지운다 (남아 있으면 폴더 줄에 문제 아이콘이 계속 뜸)
+        if f.stopReason == nil, s.state == .stopped {
+            s.state = needs.isEmpty ? .idle : .syncing
+            s.lastError = nil
+        }
         status[id] = s
     }
 
