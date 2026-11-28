@@ -58,6 +58,17 @@ struct INASApp: App {
             }
         }
 
+        // 폴더 상세 (탐색 · 받기 · 보내기): 폴더마다 창 하나
+        WindowGroup("폴더 상세", id: "folderDetail", for: String.self) { $id in
+            if let id {
+                FolderDetailView(folderID: id)
+                    .environmentObject(model.folders)
+                    .environmentObject(model.agent)
+            }
+        }
+        .defaultSize(width: 860, height: 560)
+        .commandsRemoved()
+
         // iNAS 설정 (⌘,): 일반(업데이트) · 서버(자동 연결) · 동기화(기기) · 기록(서버 · 동기화)
         Settings {
             AppSettingsView()

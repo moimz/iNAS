@@ -60,6 +60,16 @@ final class AgentClient: ObservableObject {
         proxy()?.syncCommand(c.encoded())
     }
 
+    /// 폴더 상세 창 정보 (창이 열려 있는 동안 1초마다)
+    func folderDetail(_ folderID: String) async -> SyncFolderDetail? {
+        guard let p = proxy() else { return nil }
+        return await withCheckedContinuation { cont in
+            let once = Once()
+            p.fetchFolderDetail(folderID) { data in once.run { cont.resume(returning: SyncFolderDetail.decode(data)) } }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { once.run { cont.resume(returning: nil) } }
+        }
+    }
+
     fileprivate func applySync(_ data: Data) {
         guard let s = SyncSnapshot.decode(data), s != sync else { return }
         sync = s

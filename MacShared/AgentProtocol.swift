@@ -28,6 +28,8 @@ enum AgentXPC {
     func fetchSync(reply: @escaping (Data) -> Void)
     /// 동기화 명령 (SyncCommand JSON)
     func syncCommand(_ data: Data)
+    /// 폴더 상세 창 정보 (SyncFolderDetail JSON)
+    func fetchFolderDetail(_ folderID: String, reply: @escaping (Data) -> Void)
 }
 
 /// 에이전트 → 앱 창. 상태가 바뀔 때마다 보낸다.

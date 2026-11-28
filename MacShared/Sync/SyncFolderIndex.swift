@@ -131,11 +131,17 @@ final class SyncFolderIndex {
         }
     }
 
+    /// 마지막 훑기에서 새로 생긴(전에 없던) 이름 — 상세 창 "추가" / "고침" 구분용
+    private(set) var lastScanNew = Set<String>()
+
     /// 디스크를 훑어 바뀐 항목을 목록에 넣고 돌려준다. subpaths 가 있으면 그 아래만(지움도 그 아래만).
-    func scan(subpaths: [String]? = nil) -> [SyncFile] {
+    /// progress: 들어간 하위 폴더 · 확인한 개수 (200개마다)
+    func scan(subpaths: [String]? = nil, progress: ((String, Int) -> Void)? = nil) -> [SyncFile] {
         guard checkFolder() else { return [] }
         var changed: [SyncFile] = []
         var seen = Set<String>()
+        lastScanNew = []
+        var checked = 0
 
         func visit(_ rel: String) -> Bool {  // true 면 그 아래로 내려간다 (폴더일 때만)
             let name = rel.precomposedStringWithCanonicalMapping
@@ -144,8 +150,14 @@ final class SyncFolderIndex {
             let url = root.appendingPathComponent(rel)
             guard let s = stat(url) else { return false }
             seen.insert(name)
+            checked += 1
+            if checked % 200 == 0, let progress {
+                progress(s.kind == .directory ? name : (name as NSString).deletingLastPathComponent, checked)
+            }
+            let wasNew = files[name].map { $0.deleted } ?? true
             if !unchanged(name, s), let f = makeFile(name: name, diskName: rel, url: url, stat: s) {
                 changed.append(f)
+                if wasNew { lastScanNew.insert(name) }
             }
             return s.kind == .directory
         }

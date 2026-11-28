@@ -100,7 +100,7 @@ struct FolderEditor: View {
                     }
                     if setting.path != nil {
                         let st = myState
-                        FolderStatusLine(kind: st.kind, text: st.text,
+                        FolderStatusLine(folderID: folderID, kind: st.kind, text: st.text,
                                          count: status.map { FolderStatusLine.count(files: $0.localFiles, bytes: $0.localBytes) })
                         if let e = status?.lastError {
                             Text(e).foregroundStyle(.red).textSelection(.enabled)
@@ -117,7 +117,7 @@ struct FolderEditor: View {
             ForEach(otherDevices) { peer in
                 Section {
                     let st = peerState(peer)
-                    FolderStatusLine(kind: st.kind, text: st.text, count: st.count)
+                    FolderStatusLine(folderID: folderID, kind: st.kind, text: st.text, count: st.count)
                 } header: {
                     DeviceSectionTitle(symbol: peer.device.symbolName, name: peer.device.name)
                 }

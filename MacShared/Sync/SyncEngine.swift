@@ -72,7 +72,20 @@ actor SyncEngine {
     // 폴더마다 한 번에 일 하나: 돌고 있으면 표시만 해 두고 끝나면 한 번 더
     private var running: Set<String> = []
     private var again: Set<String> = []
-    private var pendingScan: [String: Set<String>?] = [:]  // nil = 전체
+    /// 변경 신호(FSEvents · 받은 뒤 등)로 훑을 곳 — 전체 재탐색보다 먼저
+    private var pendingEvents: [String: Set<String>] = [:]
+    /// 전체 재탐색이 필요한 폴더
+    private var pendingFull: Set<String> = []
+    private var lastFullScan: [String: Date] = [:]
+    // 상세 창: 받기 · 보내기 (에이전트 메모리에만)
+    private var needSince: [String: [String: Date]] = [:]
+    private var pullDone: [String: [String: Int64]] = [:]
+    private var pullingNow: [String: String] = [:]
+    private var sendSince: [String: [String: [String: Date]]] = [:]   // 폴더 → 기기 → 이름 → 들어온 시각
+    private var sent: [String: [String: [String: Int64]]] = [:]
+    private var sendingNow: [String: [String: (String, Date)]] = [:]  // 폴더 → 기기 → (이름, 마지막 보낸 시각)
+    /// 상세 창 정보 (actor 밖에서 바로 읽는다)
+    nonisolated let detail = SyncDetailBox()
     private var status: [String: SyncFolderStatus] = [:]
     /// 폴더가 멈춘 이유 (풀려나면 lastError 에서 지우려고 기억)
     private var stopReasons: [String: String] = [:]
@@ -124,6 +137,7 @@ actor SyncEngine {
         for id in folders.keys where !ids.contains(id) {
             folders[id] = nil
             status[id] = nil
+            detail.remove(id)
         }
         for c in configs {
             if let f = folders[c.id] {
@@ -320,6 +334,17 @@ actor SyncEngine {
             return fail("파일이 바뀜")
         }
         p.conn.send(.response(.init(id: r.id, data: data, error: nil)))
+        // 상세 창 "보내기": 이 기기에 이 파일을 얼마나 보냈나
+        let key = p.peer.keyID
+        let total = (sent[r.folder]?[key]?[r.name] ?? 0) + Int64(data.count)
+        sent[r.folder, default: [:]][key, default: [:]][r.name] = total
+        sendingNow[r.folder, default: [:]][key] = (r.name, Date())
+        detail.update(r.folder) { d in
+            if let i = d.send.firstIndex(where: { $0.peer == key && $0.path == r.name }) {
+                d.send[i].done = total
+                d.send[i].active = true
+            }
+        }
     }
 
     private func request(_ p: Peer, folder: String, name: String, block b: SyncBlock) async throws -> Data {
@@ -347,15 +372,37 @@ actor SyncEngine {
 
     /// 이 폴더를 (일부) 다시 훑어 달라 (FSEvents · 받은 뒤 등)
     func requestScan(_ folderID: String, _ subpaths: [String]?) {
-        if let subpaths, case .some(.some(var cur)) = pendingScan[folderID] {
-            cur.formUnion(subpaths)
-            pendingScan[folderID] = .some(cur)
-        } else if let subpaths, pendingScan[folderID] == nil {
-            pendingScan[folderID] = .some(Set(subpaths))
+        if let subpaths {
+            pendingEvents[folderID, default: []].formUnion(subpaths)
         } else {
-            pendingScan[folderID] = .some(nil)
+            pendingFull.insert(folderID)
+            detail.update(folderID) { $0.scan.fullWaiting = true }
         }
         kick(folderID)
+    }
+
+    /// 상세 창 정보 (훑는 중에도 바로)
+    nonisolated func folderDetail(_ folderID: String) -> SyncFolderDetail { detail.get(folderID) }
+
+    /// 폴더마다 재탐색 간격이 되면 전체를 다시 훑는다 (30초마다 확인, 앱 쪽에서 한 번 시작)
+    private var rescanLoopStarted = false
+    func startRescanLoop() {
+        guard !rescanLoopStarted else { return }
+        rescanLoopStarted = true
+        Task {
+            while true {
+                try? await Task.sleep(for: .seconds(30))
+                self.rescanDue()
+            }
+        }
+    }
+
+    private func rescanDue() {
+        let now = Date()
+        for (id, f) in folders where f.config.rescanInterval > 0 && !pendingFull.contains(id) {
+            if let last = lastFullScan[id], now.timeIntervalSince(last) < f.config.rescanInterval { continue }
+            requestScan(id, nil)
+        }
     }
 
     func requestPull(_ folderID: String) { kick(folderID) }
@@ -384,12 +431,31 @@ actor SyncEngine {
     /// 한 바퀴: 훑기 → 알리기 → 받기 → 알리기
     private func work(_ id: String) async {
         guard let f = folders[id] else { return }
-        if let scope = pendingScan.removeValue(forKey: id) {
+        // 1) 변경 신호가 먼저 (그동안 전체 재탐색은 대기)
+        if let events = pendingEvents.removeValue(forKey: id), !events.isEmpty {
             status[id]?.state = .scanning
+            detail.update(id) { $0.scan.phase = .events; $0.scan.fullWaiting = self.pendingFull.contains(id); $0.scan.dir = nil; $0.scan.checked = 0 }
             publish()
-            let changed = f.scan(subpaths: scope.map { Array($0) })
+            let changed = f.scan(subpaths: Array(events)) { [detail] dir, n in detail.update(id) { $0.scan.dir = dir; $0.scan.checked = n } }
+            recordLocal(f, changed, origin: .event)
             broadcast(id, changed)
         }
+        // 2) 전체 재탐색 (그사이 새 변경 신호가 오면 다음 바퀴에 먼저)
+        if pendingEvents[id] == nil, pendingFull.remove(id) != nil {
+            status[id]?.state = .scanning
+            detail.update(id) { $0.scan.phase = .full; $0.scan.fullWaiting = false; $0.scan.dir = ""; $0.scan.checked = 0 }
+            publish()
+            let changed = f.scan(subpaths: nil) { [detail] dir, n in detail.update(id) { $0.scan.dir = dir; $0.scan.checked = n } }
+            lastFullScan[id] = Date()
+            recordLocal(f, changed, origin: .rescan)
+            broadcast(id, changed)
+        } else if pendingEvents[id] != nil {
+            again.insert(id)
+        }
+        let last = lastFullScan[id]
+        let interval = f.config.rescanInterval
+        detail.update(id) { $0.scan.phase = .idle; $0.scan.dir = nil; $0.scan.lastFull = last; $0.scan.interval = interval
+            $0.scan.fullWaiting = self.pendingFull.contains(id) }
         if let reason = f.stopReason {
             status[id]?.state = .stopped
             status[id]?.lastError = reason
@@ -408,9 +474,41 @@ actor SyncEngine {
 
     // MARK: 받기
 
+    /// 이 Mac 에서 알아챈 변경을 상세 창 "최근 변경" 에 (폴더 줄은 빼고)
+    private func recordLocal(_ f: SyncFolderIndex, _ changed: [SyncFile], origin: SyncFolderDetail.Change.Origin) {
+        let now = Date()
+        let list = changed.filter { $0.kind != .directory }.map { c in
+            SyncFolderDetail.Change(date: now, path: c.name,
+                                    action: c.deleted ? .deleted : (f.lastScanNew.contains(c.name) ? .added : .modified), origin: origin)
+        }
+        detail.record(f.config.id, list)
+    }
+
+    /// 받을 것: 들어온 시각을 기억하고(새것 추가 · 끝난 것 빼기) 상세 창 줄을 만든다
+    private func refreshReceive(_ f: SyncFolderIndex, _ needs: [(file: SyncFile, from: String)]) {
+        let id = f.config.id
+        let now = Date()
+        var since = needSince[id] ?? [:]
+        let names = Set(needs.map(\.file.name))
+        since = since.filter { names.contains($0.key) }
+        for n in needs where since[n.file.name] == nil { since[n.file.name] = now }
+        needSince[id] = since
+        pullDone[id] = (pullDone[id] ?? [:]).filter { names.contains($0.key) }
+        let files = needs.filter { $0.file.kind != .directory }
+        let rows = files.prefix(SyncFolderDetail.rowLimit).map { n in
+            SyncFolderDetail.Transfer(since: since[n.file.name] ?? now, path: n.file.name, peer: n.from,
+                                      done: pullDone[id]?[n.file.name] ?? 0, total: n.file.deleted ? 0 : n.file.size,
+                                      active: pullingNow[id] == n.file.name)
+        }
+        let count = files.count
+        let bytes = files.reduce(Int64(0)) { $0 + ($1.file.deleted ? 0 : $1.file.size) }
+        detail.update(id) { $0.receive = rows; $0.receiveCount = count; $0.receiveBytes = bytes }
+    }
+
     private func pull(_ f: SyncFolderIndex) async {
         let id = f.config.id
         var needs = f.needed()
+        refreshReceive(f, needs)
         if needs.isEmpty { return }
         status[id]?.state = .syncing
         status[id]?.needItems = needs.count
@@ -430,6 +528,9 @@ actor SyncEngine {
                 rescans.append(g.name)
                 continue
             }
+            let before = f.files[g.name]
+            pullingNow[id] = g.name
+            refreshReceive(f, needs)
             do {
                 let changedNames: [String]
                 switch (g.deleted, g.kind) {
@@ -440,6 +541,10 @@ actor SyncEngine {
                 }
                 rescans += changedNames
                 if let rec = f.files[g.name] { done.append(rec) }
+                if g.kind != .directory {
+                    let action: SyncFolderDetail.Change.Action = g.deleted ? .deleted : ((before == nil || before!.deleted) ? .added : .modified)
+                    detail.record(id, [SyncFolderDetail.Change(date: Date(), path: g.name, action: action, origin: .peer(from))])
+                }
             } catch {
                 errors += 1
                 status[id]?.lastError = "\(g.name): \(error.localizedDescription)"
@@ -448,6 +553,8 @@ actor SyncEngine {
             status[id]?.needItems -= 1
             if done.count % 200 == 0 { publish() }
         }
+        pullingNow[id] = nil
+        refreshReceive(f, f.needed().filter { connected[$0.from] != nil })
         f.save()
         broadcast(id, done)
         if errors == 0 { status[id]?.lastError = nil }
@@ -483,6 +590,16 @@ actor SyncEngine {
         defer { try? out.close() }
         // 블록: 내 파일에 같은 것이 있으면 복사, 없으면 저쪽에 (한 번에 16개까지 동시에)
         var remoteBlocks: [SyncBlock] = []
+        var written: Int64 = 0
+        let fid = f.config.id
+        func progress(_ n: Int64) {
+            written += n
+            pullDone[fid, default: [:]][g.name] = written
+            let w = written
+            detail.update(fid) { d in
+                if let i = d.receive.firstIndex(where: { $0.path == g.name }) { d.receive[i].done = w }
+            }
+        }
         for b in g.blocks {
             if let (n, off) = localBlocks[b.hash], let src = try? FileHandle(forReadingFrom: f.url(of: n)) {
                 defer { try? src.close() }
@@ -490,6 +607,7 @@ actor SyncEngine {
                    d.count == Int(b.size), Data(SHA256.hash(data: d)) == b.hash {
                     try out.seek(toOffset: UInt64(b.offset))
                     try out.write(contentsOf: d)
+                    progress(Int64(d.count))
                     continue
                 }
             }
@@ -510,6 +628,7 @@ actor SyncEngine {
                 try out.seek(toOffset: UInt64(b.offset))
                 try out.write(contentsOf: d)
             }
+            progress(results.reduce(Int64(0)) { $0 + Int64($1.1.count) })
         }
         try out.truncate(atOffset: UInt64(g.size))
         try out.close()
@@ -616,6 +735,7 @@ actor SyncEngine {
 
     private func updateStatus(_ f: SyncFolderIndex) {
         let id = f.config.id
+        pendingSendRows = [:]
         var s = status[id] ?? SyncFolderStatus()
         let needs = f.needed().filter { connected[$0.from] != nil }
         s.needItems = needs.count
@@ -643,6 +763,15 @@ actor SyncEngine {
         s.peerNeed = peerNeed
         s.peerFiles = peerFiles
         s.peerBytes = peerBytes
+        // 상세 창 "보내기": 기기마다 따로 줄 (같은 파일도 기기가 다르면 다른 줄)
+        let all = pendingSendRows.values.flatMap { $0 }.sorted { ($0.since, $0.path, $0.peer) < ($1.since, $1.path, $1.peer) }
+        pendingSendRows = [:]
+        let sendBytes = all.reduce(Int64(0)) { $0 + $1.total }
+        detail.update(id) { d in
+            d.send = Array(all.prefix(SyncFolderDetail.rowLimit))
+            d.sendCount = all.count
+            d.sendBytes = sendBytes
+        }
         if s.state != .stopped { s.state = needs.isEmpty ? .idle : .syncing }
         // 멈춤에서 풀려나면(표시 파일이 돌아옴 등) 멈춘 이유도 지운다 (남아 있으면 폴더 줄에 문제 아이콘이 계속 뜸)
         if f.stopReason == nil, s.state == .stopped {
@@ -653,20 +782,40 @@ actor SyncEngine {
     }
 
     /// 저쪽이 받아야 할 수: 전역 버전과 저쪽 버전이 다른 이름 (지움인데 저쪽에 없으면 빼고)
+    /// 저쪽이 받아야 할 수 (+ 그중 이 Mac 이 최신을 가진 파일 = 이 Mac 이 보낼 것)
     private func peerNeeds(_ f: SyncFolderIndex, _ peer: String) -> Int {
         let theirs = f.remote[peer] ?? [:]
         var names = Set(f.files.keys)
         for list in f.remote.values { names.formUnion(list.keys) }
         var n = 0
+        var sendable: [SyncFile] = []
         for name in names where !f.isIgnored(name) {
             guard let g = f.global(name) else { continue }
             let t = theirs[name]
             if let t, t.version == g.file.version { continue }
             if g.file.deleted && (t == nil || t!.deleted) { continue }
             n += 1
+            if g.file.kind == .file, !g.file.deleted, let mine = f.files[name], mine.version == g.file.version { sendable.append(g.file) }
+        }
+        // 들어온 시각 기억 (새것 추가 · 끝난 것 빼기)
+        let id = f.config.id
+        let now = Date()
+        let keep = Set(sendable.map(\.name))
+        var since = (sendSince[id]?[peer] ?? [:]).filter { keep.contains($0.key) }
+        for file in sendable where since[file.name] == nil { since[file.name] = now }
+        sendSince[id, default: [:]][peer] = since
+        sent[id, default: [:]][peer] = (sent[id]?[peer] ?? [:]).filter { keep.contains($0.key) }
+        sendable.sort { (since[$0.name] ?? now, $0.name) < (since[$1.name] ?? now, $1.name) }
+        pendingSendRows[peer] = sendable.map { file in
+            let active = sendingNow[id]?[peer].map { $0.0 == file.name && now.timeIntervalSince($0.1) < 3 } ?? false
+            return SyncFolderDetail.Transfer(since: since[file.name] ?? now, path: file.name, peer: peer,
+                                             done: sent[id]?[peer]?[file.name] ?? 0, total: file.size, active: active)
         }
         return n
     }
+
+    /// updateStatus 한 바퀴 동안 기기별 보낼 줄을 모은다
+    private var pendingSendRows: [String: [SyncFolderDetail.Transfer]] = [:]
 
     func currentStatus() -> [String: SyncFolderStatus] { status }
 

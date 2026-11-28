@@ -61,6 +61,8 @@ enum SyncCommand: Codable {
     case removeDevice(String)
     /// 차단 풀기
     case restoreDevice(String)
+    /// 이 폴더를 지금 전체 재탐색
+    case rescan(String)
 
     static func decode(_ data: Data) -> SyncCommand? { try? JSONDecoder().decode(SyncCommand.self, from: data) }
     func encoded() -> Data { (try? JSONEncoder().encode(self)) ?? Data() }

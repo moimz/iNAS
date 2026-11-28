@@ -171,6 +171,8 @@ final class SyncDiscovery: ObservableObject {
         let cachedPeers = syncPeers()
         Task {
             if !cachedPeers.isEmpty { await engine.setPeers(cachedPeers) }
+            // FSEvents 를 놓친 것까지: 폴더마다 정한 간격(기본 1시간, Syncthing 과 같음)으로 전체를 다시 훑는다
+            await engine.startRescanLoop()
             await engine.setStatusHandler { [weak self] st in Task { @MainActor in self?.engineStatus(st) } }
             await engine.setLinkHandler { [weak self] links in Task { @MainActor in self?.linksChanged(links) } }
             await refresh()
@@ -184,10 +186,6 @@ final class SyncDiscovery: ObservableObject {
             },
             Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
                 Task { @MainActor in self?.manageLinks() }
-            },
-            // FSEvents 를 놓친 것까지: 한 시간마다 전체를 다시 훑는다 (Syncthing 기본과 같음)
-            Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
-                Task { @MainActor in await self?.engine.rescanAll() }
             },
         ]
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: nil) { [weak self] _ in

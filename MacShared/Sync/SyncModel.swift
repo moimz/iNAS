@@ -188,4 +188,6 @@ struct SyncFolderConfig: Equatable {
     var name: String
     var path: String
     var ignores: String
+    /// 전체 재탐색 간격(초), 0 = 끔 (Syncthing 기본 1시간, 이 Mac 설정)
+    var rescanInterval: TimeInterval = 3600
 }

@@ -52,9 +52,11 @@ struct SyncStateSymbol: View {
 
 /// "상태" 줄: [기호] 글 · 파일 수 [상세보기]
 struct FolderStatusLine: View {
+    let folderID: String
     let kind: SyncStateSymbol.Kind
     let text: String
     let count: String?
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         LabeledContent("상태") {
@@ -65,9 +67,8 @@ struct FolderStatusLine: View {
                 if let count {
                     Text(count).foregroundStyle(.secondary).monospacedDigit().lineLimit(1).fixedSize()
                 }
-                Button("상세보기") {}
-                    .disabled(true)
-                    .help("나중에 만들 기능")
+                // 별도 창 (시트는 macOS 26 에서 창 가운데 떠서, 사용자 2026-11-28)
+                Button("상세보기") { openWindow(id: "folderDetail", value: folderID) }
             }
         }
     }

@@ -40,6 +40,8 @@ struct LocalFolderSetting: Codable, Equatable {
     var enabled = false
     var path: String?
     var bookmark: Data?
+    /// 전체 재탐색 간격(분), nil = 60분(기본), 0 = 끔
+    var rescanMinutes: Int?
 }
 
 /// 폴더 목록(iCloud CloudKit, Sync 영역 SyncFolder 기록)과 이 Mac 의 폴더 설정(UserDefaults)
@@ -110,7 +112,8 @@ final class SyncFolderStore: ObservableObject {
         folders.compactMap { f in
             let s = setting(f.id)
             guard s.enabled, let path = resolvedPath(f.id) else { return nil }
-            return SyncFolderConfig(id: f.id, name: f.name, path: path, ignores: f.ignores)
+            return SyncFolderConfig(id: f.id, name: f.name, path: path, ignores: f.ignores,
+                                    rescanInterval: TimeInterval((s.rescanMinutes ?? 60) * 60))
         }
     }
 
@@ -181,6 +184,13 @@ final class SyncFolderStore: ObservableObject {
                 Log.app.error("folders: \(self.iCloudError ?? "", privacy: .public)")
             }
         }
+    }
+
+    func setRescanMinutes(_ id: String, _ minutes: Int) {
+        var s = setting(id)
+        s.rescanMinutes = minutes
+        local[id] = s
+        saveLocal()
     }
 
     func setEnabled(_ id: String, _ on: Bool) {

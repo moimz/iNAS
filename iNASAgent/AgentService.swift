@@ -147,6 +147,7 @@ final class AgentService: NSObject {
             Task { await folders.poll() }
         case .removeDevice(let id): Task { await sync.removeDevice(id) }
         case .restoreDevice(let key): Task { await sync.restoreDevice(key) }
+        case .rescan(let id): Task { await sync.engine.requestScan(id, nil) }
         }
     }
 
@@ -466,6 +467,12 @@ private final class AgentExport: NSObject, INASAgentProtocol {
     func fetchSync(reply: @escaping (Data) -> Void) {
         DispatchQueue.main.async {
             MainActor.assumeIsolated { reply(AgentService.shared.sync.snapshot().encoded()) }
+        }
+    }
+
+    func fetchFolderDetail(_ folderID: String, reply: @escaping (Data) -> Void) {
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { reply(AgentService.shared.sync.engine.folderDetail(folderID).encoded()) }
         }
     }
 
