@@ -283,7 +283,22 @@ final class SyncDiscovery: ObservableObject {
 
     private func engineStatus(_ st: [String: SyncFolderStatus]) {
         folderStatus = st
-        me.folders = st.mapValues { SyncDeviceFolder(state: $0.state.rawValue, needItems: $0.needItems, lastSync: $0.lastSync) }
+        updateMyFolders()
+    }
+
+    /// iCloud 내 기록의 폴더 목록: 이 Mac 에서 동기화를 켠 폴더는 엔진 상태와 상관없이 늘 올린다.
+    /// 다른 Mac 의 폴더 화면은 이 목록으로 "이 폴더를 쓰는 기기" 를 보이는데, 전에는 엔진 상태에서만 만들어
+    /// 상태가 아직 없으면(시작 직후 · 상태를 놓침) 그 기기가 화면에서 사라졌다 (2026-11-29 맥북)
+    private func updateMyFolders() {
+        var out: [String: SyncDeviceFolder] = [:]
+        for c in folderConfigs {
+            if let s = folderStatus[c.id] {
+                out[c.id] = SyncDeviceFolder(state: s.state.rawValue, needItems: s.needItems, lastSync: s.lastSync ?? me.folders[c.id]?.lastSync)
+            } else {
+                out[c.id] = SyncDeviceFolder(state: SyncFolderStatus.State.waiting.rawValue, needItems: 0, lastSync: me.folders[c.id]?.lastSync)
+            }
+        }
+        me.folders = out
     }
 
     // MARK: 앱 창에 보낼 상태
@@ -383,6 +398,7 @@ final class SyncDiscovery: ObservableObject {
     func setFolders(_ configs: [SyncFolderConfig]) {
         guard configs != folderConfigs else { return }
         folderConfigs = configs
+        updateMyFolders()
         Task { await engine.configure(folders: configs) }
         let ids = Set(configs.map(\.id))
         for id in watchers.keys where !ids.contains(id) { watchers[id] = nil }
