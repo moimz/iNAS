@@ -26,6 +26,15 @@ struct ContentView: View {
     @State private var selection: SidebarItem?
     @State private var deleteServer: ServerConfig?
     @State private var deleteFolder: SyncFolder?
+    @Environment(\.openWindow) private var openWindow
+    @AppStorage(FolderDetailView.tabRequestKey) private var detailTabRequest = ""
+
+    /// 메뉴 막대의 "상세보기…" 로 온 요청을 받아 상세 창을 연다
+    private func takeDetailRequest() {
+        guard let r = FolderDetailRequest.take() else { return }
+        detailTabRequest = r.target.key + "#\(r.tab)"
+        openWindow(id: "folderDetail", value: r.target)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -53,7 +62,9 @@ struct ContentView: View {
         }
         .onAppear {
             if selection == nil { selection = store.servers.first.map { .server($0.id) } }
+            takeDetailRequest()
         }
+        .onReceive(NotificationCenter.default.publisher(for: FolderDetailRequest.notification)) { _ in takeDetailRequest() }
         .task {
             // 자동 연결은 창 없이 돌아서 권한을 물을 수 없으므로, 창이 열릴 때 미리 받아 둔다.
             if store.notifyAfterLoginMount {

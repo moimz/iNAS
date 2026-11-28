@@ -22,6 +22,7 @@ struct FolderDetailView: View {
     @State private var unreachable = false
     @SceneStorage("folderDetailTab") private var tab = 0
     @AppStorage(Self.tabRequestKey) private var tabRequest = ""
+    @Environment(\.openWindow) private var openWindow
 
     static let tabRequestKey = "folderDetailTabRequest"
     static let conflictTab = 3
@@ -87,6 +88,12 @@ struct FolderDetailView: View {
         .navigationTitle(isMe ? "\(folderName) — \(tabs[shownTab].title)" : "\(folderName) · \(owner) — \(tabs[shownTab].title)")
         .onAppear(perform: takeTabRequest)
         .onChange(of: tabRequest) { _, _ in takeTabRequest() }
+        // 메인 창을 닫아 둔 채 메뉴 막대에서 다른 폴더 상세를 열 때를 위해 상세 창도 요청을 받는다 (먼저 받은 창이 연다)
+        .onReceive(NotificationCenter.default.publisher(for: FolderDetailRequest.notification)) { _ in
+            guard let r = FolderDetailRequest.take() else { return }
+            tabRequest = r.target.key + "#\(r.tab)"
+            openWindow(id: "folderDetail", value: r.target)
+        }
         .task {
             while !Task.isCancelled {
                 let d = await agent.folderDetail(folderID, peer: target.peer)

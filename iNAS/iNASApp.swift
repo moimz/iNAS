@@ -90,13 +90,39 @@ extension INASApp {
     }
 }
 
+/// 메뉴 막대에서 온 "이 폴더 상세 창을 열어 달라". 창을 여는 openWindow 는 뷰에만 있어서 메인 창(ContentView)이 받아 연다.
+/// 막 켜진 앱이면 뷰가 아직 없으니 pending 에 두고 뷰가 나타날 때 가져간다
+@MainActor
+enum FolderDetailRequest {
+    static let notification = Notification.Name("iNAS.openFolderDetail")
+    private(set) static var pending: (target: FolderDetailTarget, tab: Int)?
+
+    static func post(_ target: FolderDetailTarget, tab: Int) {
+        pending = (target, tab)
+        NotificationCenter.default.post(name: notification, object: nil)
+    }
+
+    static func take() -> (target: FolderDetailTarget, tab: Int)? {
+        defer { pending = nil }
+        return pending
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let launchedAt = Date()
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     /// `inas://settings` — 메뉴 막대(iNASAgent)의 "iNAS 설정…". 설정 창만 띄운다.
+    /// `inas://detail/<폴더 아이디>?tab=N` — 메뉴 막대 폴더의 "상세보기…" · "충돌 사본 관리…". 그 폴더 상세 창을 연다.
     func application(_ application: NSApplication, open urls: [URL]) {
+        if let url = urls.first(where: { $0.scheme == "inas" && $0.host == "detail" }),
+           let id = url.pathComponents.dropFirst().first {
+            let tab = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "tab" }?.value.flatMap(Int.init) ?? 0
+            FolderDetailRequest.post(FolderDetailTarget(folderID: id, peer: nil), tab: tab)
+            NSApp.activate()
+            return
+        }
         guard urls.contains(where: { $0.scheme == "inas" && $0.host == "settings" }) else { return }
         // 이 주소로 막 켜졌으면 SwiftUI 가 메인 창도 같이 띄우므로, 설정 창이 뜬 뒤 메인 창은 닫는다.
         let justLaunched = Date().timeIntervalSince(launchedAt) < 5
