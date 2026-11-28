@@ -168,7 +168,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             let st = snap.folderStatus[f.id]
             let state = folderState(f.id, st)
             let row = NSMenuItem(title: f.name, action: nil, keyEquivalent: "")
-            row.image = state.mark.image
+            row.attributedTitle = Self.marked(f.name, state.mark)
             row.submenu = folderMenu(f, st, snap, state.text)
             menu.addItem(row)
         }
@@ -282,7 +282,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
                 (text, mark) = ("공유폴더 \(total)개 중 \(mounted)개 연결됨", .problem)
             }
             let row = NSMenuItem(title: server.displayName, action: nil, keyEquivalent: "")
-            row.image = mark.image
+            row.attributedTitle = Self.marked(server.displayName, mark)
 
             let sub = NSMenu()
             sub.autoenablesItems = false
@@ -299,7 +299,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
                 item.target = self
                 item.representedObject = mount?.mountPoint
                 item.isEnabled = mount != nil
-                item.image = (mount == nil ? Mark.offline : Mark.ok).image
+                item.attributedTitle = Self.marked(share, mount == nil ? .offline : .ok, dim: mount == nil)
                 sub.addItem(item)
             }
             row.submenu = sub
@@ -315,12 +315,10 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         let font = NSFont.menuFont(ofSize: 0)
         let para = NSMutableParagraphStyle()
         para.tabStops = [NSTextTab(textAlignment: .right, location: 300)]  // tightenPairs 가 메뉴마다 줄인다
-        let t = NSMutableAttributedString(string: name + "\t", attributes: [
-            .font: font, .paragraphStyle: para, .foregroundColor: NSColor.labelColor,
-        ])
-        t.append(NSAttributedString(string: detail, attributes: [
-            .font: font, .paragraphStyle: para, .foregroundColor: NSColor.secondaryLabelColor,
-        ]))
+        let t = NSMutableAttributedString(attributedString: mark.map { Self.marked(name, $0) } ?? NSAttributedString(string: name, attributes: [.font: font]))
+        t.append(NSAttributedString(string: "\t", attributes: [.font: font]))
+        t.append(NSAttributedString(string: detail, attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor]))
+        t.addAttribute(.paragraphStyle, value: para, range: NSRange(location: 0, length: t.length))
         item.attributedTitle = t
         return item
     }
@@ -337,7 +335,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         var nameW: CGFloat = 0, detailW: CGFloat = 0
         for (_, t) in rows {
             let parts = t.string.components(separatedBy: "\t")
-            nameW = max(nameW, width(parts[0]))
+            nameW = max(nameW, width(parts[0].replacingOccurrences(of: "\u{FFFC}", with: "")) + 20)
             detailW = max(detailW, width(parts.dropFirst().joined()))
         }
         let para = NSMutableParagraphStyle()
@@ -352,8 +350,26 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     private func info(_ title: String, mark: Mark? = nil) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.isEnabled = false
-        item.image = mark?.image
+        if let mark { item.attributedTitle = Self.marked(title, mark) }
         return item
+    }
+
+    /// "[표시] 이름" — 표시는 글 안에 붙인 그림(NSTextAttachment). NSMenuItem.image 는 이 메뉴에서 안 그려져서
+    /// (빌드 99~104 점이 안 보임, 글 안 그림은 보였음). 표시는 모두 16×16 칸이라 이름이 한 줄로 맞는다
+    static func marked(_ name: String, _ mark: Mark, dim: Bool = false) -> NSAttributedString {
+        let font = NSFont.menuFont(ofSize: 0)
+        let out = NSMutableAttributedString()
+        if let image = mark.image {
+            let a = NSTextAttachment()
+            a.image = image
+            a.bounds = NSRect(x: 0, y: (font.capHeight - image.size.height) / 2, width: image.size.width, height: image.size.height)
+            out.append(NSAttributedString(attachment: a))
+            out.append(NSAttributedString(string: "  ", attributes: [.font: font]))
+        }
+        var attrs: [NSAttributedString.Key: Any] = [.font: font]
+        if dim { attrs[.foregroundColor] = NSColor.secondaryLabelColor }
+        out.append(NSAttributedString(string: name, attributes: attrs))
+        return out
     }
 
     private static func size(_ b: Int64) -> String { ByteCountFormatter.string(fromByteCount: b, countStyle: .file) }
