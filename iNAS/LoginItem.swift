@@ -20,8 +20,22 @@ final class LoginItemController: ObservableObject {
 
     init() {
         refresh()
+        removeStrayLoginItem()
         migrateFromLegacyAgent()
         reregisterIfPlistChanged()
+    }
+
+    /// 앱 안 iNASAgent.app 을 로그인할 때 그냥 실행하는 옛 "로그인 항목"(com.moimz.iNAS.agent)이 등록돼 있으면 푼다.
+    /// 상주 에이전트(com.moimz.iNAS.helper)와 함께 떠서 에이전트가 둘이 됐다 (2026-11-28 재부팅). 이 등록은 앱만 풀 수 있다.
+    private func removeStrayLoginItem() {
+        let stray = SMAppService.loginItem(identifier: "com.moimz.iNAS.agent")
+        guard stray.status != .notRegistered, stray.status != .notFound else { return }
+        do {
+            try stray.unregister()
+            Log.app.info("옛 로그인 항목(iNASAgent.app 바로 실행)을 해제함")
+        } catch {
+            Log.app.error("옛 로그인 항목 해제 실패: \(error.localizedDescription)")
+        }
     }
 
     /// 옛 로그인 항목(com.moimz.iNAS.agent)이 켜져 있으면 해제하고 새 항목을 등록한다.

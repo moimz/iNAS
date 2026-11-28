@@ -2,6 +2,14 @@ import AppKit
 
 // iNASAgent.app: 로그인 항목으로 늘 떠 있는 에이전트 + 메뉴 막대 아이콘.
 // 번들 ID 가 본체와 달라(com.moimz.iNAS.agent) 본체로 가는 종료 요청 · open 과 섞이지 않는다.
+// 우리가 등록한 상주 에이전트(launchd 라벨 com.moimz.iNAS.helper)로 뜬 것만 일한다.
+// 옛 로그인 항목(com.moimz.iNAS.agent) 등 다른 길로 또 뜨면 둘이 같은 폴더를 동기화해 목록이 꼬이므로 바로 끝낸다 (2026-11-28 재부팅 뒤 둘이 뜸).
+// launchd 밖에서 직접 띄운 것(XPC_SERVICE_NAME 없음 · 시험)은 막지 않는다.
+if let label = ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"], label != "0", label != AgentXPC.machServiceName {
+    Log.app.error("에이전트가 \(label, privacy: .public) 로 떠서 끝냅니다 (상주 에이전트는 \(AgentXPC.machServiceName, privacy: .public) 하나만)")
+    exit(0)
+}
+
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 MainActor.assumeIsolated {
