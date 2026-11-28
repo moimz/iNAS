@@ -583,7 +583,10 @@ actor SyncEngine {
         }
         for (g, from) in needs {
             guard let p = connected[from], p.folders.contains(id) else { continue }
-            if f.diskDiffers(g.name) {
+            // 저쪽이 지운 폴더가 이쪽 목록엔 없는데 디스크에만 있으면, 안의 파일을 받으며 저절로 생긴 상위 폴더다
+            // (폴더 기록이 다음 목록 묶음에 와서). 이쪽 변경이 아니니 재탐색하지 않고 지우기로 간다
+            let implicitDir = g.deleted && g.kind == .directory && (f.files[g.name] == nil || f.files[g.name]!.deleted)
+            if !implicitDir, f.diskDiffers(g.name) {
                 rescans.append(g.name)
                 continue
             }
@@ -756,6 +759,9 @@ actor SyncEngine {
     private func deleteItem(_ f: SyncFolderIndex, _ g: SyncFile) throws -> [String] {
         let fm = FileManager.default
         guard let cur = f.files[g.name], !cur.deleted else {
+            // 목록엔 없지만 디스크에 폴더가 있으면(받으며 저절로 생긴 상위 폴더) 빈 폴더일 때만 지운다.
+            // 안 지우면 그 위 폴더 지우기가 "비어 있지 않아 못 지움" 으로 계속 실패했다 (2026-11-29, 빌드 폴더)
+            if g.kind == .directory, isRealDirectory(f.url(of: g.name)) { try? removeEmptyDirectory(f, g.name) }
             f.record(g, diskName: nil)
             return []
         }
@@ -786,13 +792,23 @@ actor SyncEngine {
         for item in items {
             let child = name + "/" + item.precomposedStringWithCanonicalMapping
             let r = f.ignore.match(child)
+            let cu = u.appendingPathComponent(item)
             if r.ignored && r.deletable {
-                try fm.removeItem(at: u.appendingPathComponent(item))
+                try fm.removeItem(at: cu)
+            } else if isRealDirectory(cu), f.files[child] == nil || f.files[child]!.deleted {
+                // 목록에 없거나 지워진 하위 폴더(저절로 생긴 상위 폴더 · 앞서 못 지운 것): 그 안도 같은 규칙으로
+                try removeEmptyDirectory(f, child)
             } else {
                 throw SyncError("폴더가 비어 있지 않아 못 지움 (\(item))")
             }
         }
         try? fm.removeItem(at: u)
+    }
+
+    /// 링크가 아닌 진짜 폴더인지
+    private func isRealDirectory(_ u: URL) -> Bool {
+        var st = stat()
+        return lstat(u.path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR
     }
 
     private func setMeta(_ u: URL, _ g: SyncFile) throws {
