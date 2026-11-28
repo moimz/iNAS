@@ -56,18 +56,17 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         item?.button?.toolTip = active ? "iNAS — 동기화 중" : "iNAS"
     }
 
-    /// 서버 아이콘 + (주고받는 중이면) 오른쪽 위 점. 점 둘레는 비워서 아이콘과 붙어 보이지 않게
+    /// 서버 아이콘 + (주고받는 중이면) 오른쪽 위 점. 점 둘레는 비워서 아이콘과 붙어 보이지 않게.
+    /// 점이 없을 때도 기호를 그대로 넘기지 않고 같은 크기 그림에 그려 넘긴다: 기호 그림은 제 크기 밖으로 그려져서,
+    /// 다른 모니터의 (비활성) 메뉴막대 사본에서 위아래가 잘려 보였다. 크기가 같으니 점이 생겨도 아이콘이 안 움직인다.
     private static func icon(dot: Bool) -> NSImage? {
         guard let base = NSImage(systemSymbolName: "externaldrive.connected.to.line.below", accessibilityDescription: "iNAS")?
             .withSymbolConfiguration(.init(pointSize: 15, weight: .regular)) else { return nil }
-        guard dot else {
-            base.isTemplate = true
-            return base
-        }
         let pad: CGFloat = 3
         let size = NSSize(width: base.size.width + pad, height: base.size.height + pad)
         let image = NSImage(size: size, flipped: false) { r in
             base.draw(in: NSRect(x: 0, y: 0, width: base.size.width, height: base.size.height))
+            guard dot else { return true }
             let d: CGFloat = 6.5, ring: CGFloat = 1.5
             let dotRect = NSRect(x: r.width - d, y: r.height - d, width: d, height: d)
             NSGraphicsContext.current?.compositingOperation = .clear
