@@ -44,12 +44,15 @@ struct FolderDetailView: View {
 
     private var folderName: String { folders.folder(folderID)?.name ?? "폴더" }
 
-    /// 이 상세가 누구 것인가 ("이 Mac" / 그 기기 이름)
-    private var owner: String { target.peer.map { name(of: $0) } ?? "이 Mac" }
+    /// 이 상세가 누구 것인가 (기기 이름)
+    private var owner: String { target.peer.map { name(of: $0) } ?? myName }
 
-    /// 키 아이디 → 기기 이름 (나는 "이 Mac")
+    /// 이 Mac 의 기기 이름. 다른 Mac 의 상세를 볼 때 "이 Mac" 이 어느 쪽인지 헷갈려서 늘 이름으로 쓴다 (사용자 2026-11-29)
+    private var myName: String { agent.sync.map { $0.me.name.isEmpty ? "이 Mac" : $0.me.name } ?? "이 Mac" }
+
+    /// 키 아이디 → 기기 이름 (나도 이름으로)
     private func name(of keyID: String) -> String {
-        if keyID == agent.sync?.keyID { return "이 Mac" }
+        if keyID == agent.sync?.keyID { return myName }
         return agent.sync?.peers.first { $0.keyID == keyID }?.device.name ?? "다른 Mac"
     }
 
@@ -214,7 +217,7 @@ private struct ScanTab: View {
                     Text(stamp(c.date)).monospacedDigit().foregroundStyle(.secondary)
                 }
                 .width(min: 70, ideal: 110, max: 140)
-                TableColumn("무엇") { c in
+                TableColumn("사유") { c in
                     let a = actionText(c.action)
                     Text(a.0).foregroundStyle(a.1)
                 }
@@ -274,15 +277,17 @@ private struct TransferTab: View {
                     Text(name(r.peer)).lineLimit(1)
                 }
                 .width(min: 70, ideal: 100, max: 160)
+                // 막대 [빈칸] 크기(오른쪽 맞춤). 막대는 짧게, 남는 폭은 파일 칸에
                 TableColumn("진행") { r in
                     HStack(spacing: 8) {
                         ProgressBar(fraction: r.total > 0 ? min(1, Double(r.done) / Double(r.total)) : 0)
-                            .frame(width: 80, height: 6)
+                            .frame(width: 56, height: 6)
+                        Spacer(minLength: 4)
                         Text(r.total > 0 ? "\(Self.size(r.done)) / \(Self.size(r.total))" : "지움")
                             .monospacedDigit().foregroundStyle(.secondary).lineLimit(1).fixedSize()
                     }
                 }
-                .width(min: 200, ideal: 230)
+                .width(min: 170, ideal: 180, max: 200)
             }
         }
     }
