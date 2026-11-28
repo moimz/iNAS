@@ -357,7 +357,7 @@ actor SyncEngine {
         }
         guard Data(SHA256.hash(data: data)) == r.hash else {
             requestScan(r.folder, [r.name])
-            return fail("파일이 바뀜")
+            return fail(SyncError.changedOnSender)
         }
         p.conn.send(.response(.init(id: r.id, data: data, error: nil)))
         // 상세 창 "보내기": 이 기기에 이 파일을 얼마나 보냈나
@@ -563,7 +563,12 @@ actor SyncEngine {
         let id = f.config.id
         var needs = f.needed()
         refreshReceive(f, needs)
-        if needs.isEmpty { return }
+        if needs.isEmpty {
+            // 받을 것이 없으면 앞서 실패한 것도 없는 것이다 (실패했던 파일을 저쪽이 지우거나 되돌려 할 일이 사라진 경우 —
+            // 그대로 두면 오류 줄과 "멈춤" 이 다음 실패 · 성공 전까지 남았다)
+            if stopReasons[id] == nil { status[id]?.lastError = nil }
+            return
+        }
         status[id]?.state = .syncing
         status[id]?.needItems = needs.count
         status[id]?.needBytes = needs.reduce(0) { $0 + ($1.file.deleted ? 0 : $1.file.size) }
@@ -614,9 +619,15 @@ actor SyncEngine {
                     log("\(f.config.name) / \(g.name) 받기 멈춤 — \(stoppedHere ? "이 Mac" : (connected[from]?.peer.name ?? "저쪽")) 에서 이 폴더 동기화를 그만둠")
                     break
                 }
-                errors += 1
-                status[id]?.lastError = "\(g.name): \(error.localizedDescription)"
-                log("\(f.config.name) / \(g.name) 받기 실패: \(error.localizedDescription)")
+                // 보내는 쪽에서 쓰는 중인 파일(빌드 기록 등): 저쪽이 다시 훑어 새 버전을 알리면 그때 다시 받는다.
+                // 일시적인 일이라 오류로 띄우지 않는다 (Syncthing 도 다음에 다시 시도)
+                if (error as? SyncError)?.message == SyncError.changedOnSender {
+                    log("\(f.config.name) / \(g.name) 보내는 쪽에서 바뀌는 중 — 새 버전이 오면 다시 받음")
+                } else {
+                    errors += 1
+                    status[id]?.lastError = "\(g.name): \(error.localizedDescription)"
+                    log("\(f.config.name) / \(g.name) 받기 실패: \(error.localizedDescription)")
+                }
             }
             status[id]?.needItems -= 1
             if done.count % 200 == 0 { publish() }
@@ -922,4 +933,6 @@ struct SyncError: LocalizedError {
     let message: String
     init(_ m: String) { message = m }
     var errorDescription: String? { message }
+    /// 보내는 쪽 파일이 목록과 달라짐 (쓰는 중) — 받는 쪽은 오류로 치지 않는다
+    static let changedOnSender = "파일이 바뀜"
 }
