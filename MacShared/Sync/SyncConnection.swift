@@ -128,6 +128,11 @@ final class FrameConnection: @unchecked Sendable {
     private var closed = false
     private var wasReady = false
     private let lock = NSLock()
+    private var _lastReceived = Date()
+
+    /// 저쪽에서 마지막으로 무엇이든 받은 때 (네트워크 큐에서 바로 적는다 — 엔진이 훑기 · 저장으로 바빠도 정확하게)
+    var lastReceived: Date { lock.lock(); defer { lock.unlock() }; return _lastReceived }
+    private func touch() { lock.lock(); _lastReceived = Date(); lock.unlock() }
 
     init(_ conn: NWConnection, queue: DispatchQueue) {
         self.conn = conn
@@ -211,6 +216,7 @@ final class FrameConnection: @unchecked Sendable {
             guard let data, data.count == 4 else {
                 return self.close(error?.localizedDescription ?? (complete ? "저쪽이 끊음" : "읽기 실패"))
             }
+            self.touch()
             let len = Int(data.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }.bigEndian)
             guard len >= 1, len <= Self.maxFrame else { return self.close("틀린 길이 \(len)") }
             self.conn.receive(minimumIncompleteLength: len, maximumLength: len) { [weak self] body, _, complete, error in
@@ -225,6 +231,12 @@ final class FrameConnection: @unchecked Sendable {
                 }
                 guard let m = try? PropertyListDecoder().decode(SyncMessage.self, from: Data(payload)) else {
                     return self.close("알 수 없는 말")
+                }
+                self.touch()
+                // 신호(ping)는 여기서 바로 답한다: 엔진이 바빠 줄이 밀려도 저쪽이 "신호 없음" 으로 끊지 않게
+                if case .ping = m {
+                    self.send(.pong)
+                    return self.readFrame()
                 }
                 self.onMessage?(m)
                 self.readFrame()

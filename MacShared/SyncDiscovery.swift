@@ -170,11 +170,12 @@ final class SyncDiscovery: ObservableObject {
         guard timers.isEmpty else { return }
         let cachedPeers = syncPeers()
         Task {
+            // 받는 쪽부터 단다 (폴더 넣기가 먼저 끝나도 상태를 놓치지 않게. 달 때 지금 상태도 한 번 받는다)
+            await engine.setStatusHandler { [weak self] st in Task { @MainActor in self?.engineStatus(st) } }
+            await engine.setLinkHandler { [weak self] links in Task { @MainActor in self?.linksChanged(links) } }
             if !cachedPeers.isEmpty { await engine.setPeers(cachedPeers) }
             // FSEvents 를 놓친 것까지: 폴더마다 정한 간격(기본 1시간, Syncthing 과 같음)으로 전체를 다시 훑는다
             await engine.startRescanLoop()
-            await engine.setStatusHandler { [weak self] st in Task { @MainActor in self?.engineStatus(st) } }
-            await engine.setLinkHandler { [weak self] links in Task { @MainActor in self?.linksChanged(links) } }
             await refresh()
         }
         timers = [
@@ -641,7 +642,11 @@ final class SyncDiscovery: ObservableObject {
             if iAmFirst { return withReason("둘 다 열림 · 내 차례") }
             return waitedTooLong(peer) ? withReason("저쪽이 안 붙어 와서") : .wait(reason: "둘 다 열림 · 저쪽 차례")
         case (false, false):
-            return .none(reason: "둘 다 들어오는 연결이 막혀 중계가 필요")
+            // 한 번씩 시간 초과가 났을 뿐일 수 있다(바깥 인터넷 · 잠깐 끊긴 망). 여기서 둘 다 손을 놓으면
+            // 실패 기록이 잊힐 때(10분)까지 아무도 붙지 않았다 (2026-11-29 맥북). 차례인 쪽이 계속 다시 해 보고,
+            // 다른 쪽도 기다리다 3분 넘으면 붙어 본다
+            if iAmFirst { return withReason("둘 다 막혀 보이지만 다시 해 봄") }
+            return .wait(reason: "둘 다 막혀 보임 · 저쪽 차례")
         }
     }
 
@@ -851,7 +856,11 @@ final class SyncDiscovery: ObservableObject {
                 note("\(peer.name) 에 못 붙음 — \(via): \(error) (\(wait)초 뒤 다시)")
             }
             if engineLinks[key] == nil {
-                setLink(peer.id, SyncLinkInfo(up: false, outgoing: true, via: via, since: nil, lastSeen: nil, rtt: nil, error: error, at: Date()))
+                // 같은 주소로 붙었던 적이 있으면 그 기록(lastSeen)은 남긴다: 한 번의 시간 초과로 "못 붙는 곳" 이 되면
+                // 역할이 기다림으로 바뀌어 다시 붙지 않았다
+                let prev = me.links[peer.id]
+                let seen = prev?.outgoing == true && prev?.via == via ? prev?.lastSeen : nil
+                setLink(peer.id, SyncLinkInfo(up: false, outgoing: true, via: via, since: nil, lastSeen: seen, rtt: nil, error: error, at: Date()))
             }
         } else {
             dialFailures[peer.id] = 0

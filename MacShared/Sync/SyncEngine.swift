@@ -99,30 +99,39 @@ actor SyncEngine {
         self.log = log
     }
 
+    /// 받는 쪽을 달면 지금 상태를 바로 한 번 보낸다. 안 보내면, 에이전트가 뜰 때 폴더 넣기 · 첫 훑기가 이것보다 먼저 끝난 경우
+    /// 그 상태가 버려지고 다음 변화까지 화면 · iCloud 기록에 폴더가 없었다 ("준비 중", 다른 Mac 에서 이 기기가 사라짐 — 2026-11-29 맥북)
     func setStatusHandler(_ h: @escaping @Sendable ([String: SyncFolderStatus]) -> Void) {
         onStatus = h
+        h(status)
     }
 
     /// 연결이 생기거나 끊기거나 신호가 올 때
     private var onLinks: (@Sendable ([SyncPeerLink]) -> Void)?
-    func setLinkHandler(_ h: @escaping @Sendable ([SyncPeerLink]) -> Void) { onLinks = h }
+    func setLinkHandler(_ h: @escaping @Sendable ([SyncPeerLink]) -> Void) {
+        onLinks = h
+        h(links())
+    }
 
     func links() -> [SyncPeerLink] {
-        connected.values.map { SyncPeerLink(keyID: $0.peer.keyID, name: $0.peer.name, remote: $0.conn.remote, since: $0.since, lastSeen: $0.lastSeen, rtt: $0.rtt) }
+        connected.values.map { SyncPeerLink(keyID: $0.peer.keyID, name: $0.peer.name, remote: $0.conn.remote, since: $0.since, lastSeen: $0.conn.lastReceived, rtt: $0.rtt) }
     }
 
     private func publishLinks() { onLinks?(links()) }
 
-    static let pingEvery: Double = 10
-    static let deadAfter: Double = 35
+    // Syncthing 은 90초마다 신호, 5분 조용하면 끊는다. 여기는 화면에 지연(rtt)을 보이려고 더 자주 보내되
+    // 끊는 기준은 넉넉하게: 바깥 인터넷으로 붙은 맥북에서 큰 목록을 보내는 사이 35초를 넘겨 끊겼다 다시 붙곤 했다 (2026-11-29)
+    static let pingEvery: Double = 15
+    static let deadAfter: Double = 120
     static let requestTimeout: Double = 60
 
-    /// 10초마다 신호, 35초 동안 아무 말도 없으면 끊는다
+    /// 15초마다 신호, 120초 동안 아무것도 못 받으면 끊는다. 받은 때는 연결이 네트워크 큐에서 적은 값을 본다
+    /// (엔진이 훑기로 바쁜 동안 쌓인 메시지를 아직 처리하지 못했어도 저쪽은 살아 있다)
     private func keepAlive(_ p: Peer) async {
         while connected[p.peer.keyID] === p {
             try? await Task.sleep(for: .seconds(Self.pingEvery))
             guard connected[p.peer.keyID] === p else { return }
-            if Date().timeIntervalSince(p.lastSeen) > Self.deadAfter {
+            if Date().timeIntervalSince(p.conn.lastReceived) > Self.deadAfter {
                 p.conn.close("\(Int(Self.deadAfter))초 동안 신호 없음")
                 return
             }

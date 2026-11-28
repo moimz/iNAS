@@ -61,14 +61,20 @@ final class AppModel: ObservableObject {
         agent.syncCommand(.reloadFolders)
     }
 
-    /// 앱이 뜨거나 앞으로 올 때: 에이전트가 있어야 하는데 3초 안에 이야기가 안 되면 다시 띄운다.
+    /// 앱이 뜨거나 앞으로 올 때: 에이전트가 있어야 하는데 이야기가 안 되면 다시 띄운다.
     /// (launchd 가 KeepAlive · MachServices 로 다시 띄우지만, 꺼져 있거나 멈춘 경우를 대비)
+    /// 3초 뒤 한 번 더 묻고 그래도 10초 안에 답이 없을 때만: 큰 폴더를 다루느라 잠깐 늦게 답하는 에이전트를
+    /// 강제로 끝내 주고받던 연결이 끊긴 적이 있다 (2026-11-29 맥북, 4초 만에 kickstart)
     private var checkingAgent = false
     func ensureAgentAlive() {
         guard !checkingAgent else { return }
         checkingAgent = true
         Task {
             try? await Task.sleep(for: .seconds(3))
+            if !agent.isConnected {
+                agent.connect()
+                try? await Task.sleep(for: .seconds(7))
+            }
             checkingAgent = false
             guard !agent.isConnected else { return }
             let want = store.autoMountAtLogin || store.autoRemount || folders.anyEnabled
