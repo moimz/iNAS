@@ -82,7 +82,7 @@ actor SyncEngine {
     // 상세 창: 받기 · 보내기 (에이전트 메모리에만)
     private var needSince: [String: [String: Date]] = [:]
     private var pullDone: [String: [String: Int64]] = [:]
-    private var pullingNow: [String: String] = [:]
+    private var pullingNow: [String: Set<String>] = [:]
     private var sendSince: [String: [String: [String: Date]]] = [:]   // 폴더 → 기기 → 이름 → 들어온 시각
     private var sent: [String: [String: [String: Int64]]] = [:]
     private var sendingNow: [String: [String: (String, Date)]] = [:]  // 폴더 → 기기 → (이름, 마지막 보낸 시각)
@@ -561,16 +561,33 @@ actor SyncEngine {
         let rows = files.prefix(SyncFolderDetail.rowLimit).map { n in
             SyncFolderDetail.Transfer(since: since[n.file.name] ?? now, path: n.file.name, peer: n.from,
                                       done: pullDone[id]?[n.file.name] ?? 0, total: n.file.deleted ? 0 : n.file.size,
-                                      active: pullingNow[id] == n.file.name)
+                                      active: pullingNow[id]?.contains(n.file.name) == true)
         }
         let count = files.count
         let bytes = files.reduce(Int64(0)) { $0 + ($1.file.deleted ? 0 : $1.file.size) }
         detail.update(id) { $0.receive = rows; $0.receiveCount = count; $0.receiveBytes = bytes }
     }
 
+    /// 한 번 받기 동안의 기록 (여러 파일을 같이 받으므로 한곳에 모은다 — 엔진(actor) 안에서만 바뀐다)
+    private final class PullRun: @unchecked Sendable {
+        var done = 0
+        var rescans: [String] = []
+        var errors = 0
+        var unsent: [SyncFile] = []
+        var lastBroadcast = Date()
+        var lastSave = Date()
+        var lastRows = Date.distantPast
+        var stop = false
+        var localBlocks: [Data: (String, Int64)] = [:]
+    }
+
+    /// 파일 내용은 이만큼 같이 받는다. 작은 파일이 많을 때 파일마다 왕복 한 번씩 기다리면 바깥 인터넷(왕복 0.1초 남짓)에서
+    /// 초당 몇 개밖에 못 받았다 (2026-11-29 맥북). Syncthing 도 여러 파일을 동시에 받는다
+    static let parallelFiles = 8
+
     private func pull(_ f: SyncFolderIndex) async {
         let id = f.config.id
-        var needs = f.needed()
+        let needs = f.needed()
         refreshReceive(f, needs)
         if needs.isEmpty {
             // 받을 것이 없으면 앞서 실패한 것도 없는 것이다 (실패했던 파일을 저쪽이 지우거나 되돌려 할 일이 사라진 경우 —
@@ -582,79 +599,117 @@ actor SyncEngine {
         status[id]?.needItems = needs.count
         status[id]?.needBytes = needs.reduce(0) { $0 + ($1.file.deleted ? 0 : $1.file.size) }
         publish()
-        var done: [SyncFile] = []
-        var rescans: [String] = []
-        var errors = 0
         // 받은 것은 다 끝날 때까지 모으지 않고 1초(또는 500개)마다 알린다 — 보낸 쪽 "보내기" 줄과 남은 개수가 받는 대로 줄게
         // (Syncthing 도 받는 동안 목록을 계속 보낸다). 목록 파일 저장은 10초마다
-        var unsent: [SyncFile] = []
-        var lastBroadcast = Date()
-        var lastSave = Date()
+        let run = PullRun()
         // 내 블록 찾기표 (같은 내용이면 저쪽에 안 묻고 내 파일에서 복사)
-        var localBlocks: [Data: (String, Int64)] = [:]
         for (n, lf) in f.files where !lf.deleted && lf.kind == .file {
-            for b in lf.blocks { localBlocks[b.hash] = (n, b.offset) }
+            for b in lf.blocks { run.localBlocks[b.hash] = (n, b.offset) }
         }
-        for (g, from) in needs {
-            guard let p = connected[from], p.folders.contains(id) else { continue }
-            // 저쪽이 지운 폴더가 이쪽 목록엔 없는데 디스크에만 있으면, 안의 파일을 받으며 저절로 생긴 상위 폴더다
-            // (폴더 기록이 다음 목록 묶음에 와서). 이쪽 변경이 아니니 재탐색하지 않고 지우기로 간다
-            let implicitDir = g.deleted && g.kind == .directory && (f.files[g.name] == nil || f.files[g.name]!.deleted)
-            if !implicitDir, f.diskDiffers(g.name) {
-                rescans.append(g.name)
+        // 순서(폴더 → 파일 → 지움)는 지키고, 이어진 파일 내용 받기만 여러 개를 같이 한다
+        var i = 0
+        while i < needs.count, !run.stop {
+            let g = needs[i].file
+            guard !g.deleted, g.kind == .file else {
+                await pullOne(f, needs[i], needs, run)
+                i += 1
                 continue
             }
-            let before = f.files[g.name]
-            pullingNow[id] = g.name
-            refreshReceive(f, needs)
-            do {
-                let changedNames: [String]
-                switch (g.deleted, g.kind) {
-                case (true, _): changedNames = try deleteItem(f, g)
-                case (false, .directory): changedNames = try makeDirectory(f, g)
-                case (false, .symlink): changedNames = try makeSymlink(f, g)
-                case (false, .file): changedNames = try await pullFile(f, g, from: p, localBlocks: localBlocks)
+            var j = i
+            while j < needs.count, !needs[j].file.deleted, needs[j].file.kind == .file { j += 1 }
+            let group = Array(needs[i..<j])
+            i = j
+            // 대소문자 · NFC/NFD 만 다른 이름은 맥 디스크에서 같은 파일이다 → 그런 게 섞이면 이 묶음은 하나씩
+            let keys = group.map { $0.file.name.precomposedStringWithCanonicalMapping.lowercased() }
+            let width = Set(keys).count == keys.count ? Self.parallelFiles : 1
+            await withTaskGroup(of: Void.self) { tg in
+                var next = 0
+                func add() {
+                    guard next < group.count else { return }
+                    let item = group[next]
+                    next += 1
+                    tg.addTask { await self.pullOne(f, item, needs, run) }
                 }
-                rescans += changedNames
-                if let rec = f.files[g.name] { done.append(rec); unsent.append(rec) }
-                if g.kind != .directory {
-                    let action: SyncFolderDetail.Change.Action = g.deleted ? .deleted : ((before == nil || before!.deleted) ? .added : .modified)
-                    detail.record(id, [SyncFolderDetail.Change(date: Date(), path: g.name, action: action, origin: .peer(from))])
+                for _ in 0..<width { add() }
+                while await tg.next() != nil {
+                    if !run.stop { add() }
                 }
-            } catch {
-                // 받는 사이 이 폴더를 그만뒀으면(이쪽이 끄거나 지움 · 저쪽이 그만둠) 실패가 아니라 멈춘 것
-                let stoppedHere = folders[id] !== f
-                if stoppedHere || connected[from]?.folders.contains(id) == false {
-                    log("\(f.config.name) / \(g.name) 받기 멈춤 — \(stoppedHere ? "이 Mac" : (connected[from]?.peer.name ?? "저쪽")) 에서 이 폴더 동기화를 그만둠")
-                    break
-                }
-                // 보내는 쪽에서 쓰는 중인 파일(빌드 기록 등): 저쪽이 다시 훑어 새 버전을 알리면 그때 다시 받는다.
-                // 일시적인 일이라 오류로 띄우지 않는다 (Syncthing 도 다음에 다시 시도)
-                if (error as? SyncError)?.message == SyncError.changedOnSender {
-                    log("\(f.config.name) / \(g.name) 보내는 쪽에서 바뀌는 중 — 새 버전이 오면 다시 받음")
-                } else {
-                    errors += 1
-                    status[id]?.lastError = "\(g.name): \(error.localizedDescription)"
-                    log("\(f.config.name) / \(g.name) 받기 실패: \(error.localizedDescription)")
-                }
-            }
-            status[id]?.needItems -= 1
-            if done.count % 200 == 0 { publish() }
-            if !unsent.isEmpty, unsent.count >= 500 || Date().timeIntervalSince(lastBroadcast) >= 1 {
-                if Date().timeIntervalSince(lastSave) >= 10 { f.save(); lastSave = Date() }
-                broadcast(id, unsent)
-                unsent = []
-                lastBroadcast = Date()
             }
         }
         pullingNow[id] = nil
         refreshReceive(f, f.needed().filter { connected[$0.from] != nil })
         f.save()
-        broadcast(id, unsent)
-        if errors == 0 { status[id]?.lastError = nil }
+        broadcast(id, run.unsent)
+        if run.errors == 0 { status[id]?.lastError = nil }
         status[id]?.lastSync = Date()
-        if !rescans.isEmpty { requestScan(id, rescans) }
-        needs = []
+        if !run.rescans.isEmpty { requestScan(id, run.rescans) }
+    }
+
+    /// 받을 것 하나 (지움 · 폴더 · 링크 · 파일)
+    private func pullOne(_ f: SyncFolderIndex, _ item: (file: SyncFile, from: String), _ needs: [(file: SyncFile, from: String)], _ run: PullRun) async {
+        let id = f.config.id
+        let (g, from) = item
+        guard !run.stop, let p = connected[from], p.folders.contains(id) else { return }
+        // 저쪽이 지운 폴더가 이쪽 목록엔 없는데 디스크에만 있으면, 안의 파일을 받으며 저절로 생긴 상위 폴더다
+        // (폴더 기록이 다음 목록 묶음에 와서). 이쪽 변경이 아니니 재탐색하지 않고 지우기로 간다
+        let implicitDir = g.deleted && g.kind == .directory && (f.files[g.name] == nil || f.files[g.name]!.deleted)
+        if !implicitDir, f.diskDiffers(g.name) {
+            run.rescans.append(g.name)
+            return
+        }
+        let before = f.files[g.name]
+        pullingNow[id, default: []].insert(g.name)
+        refreshReceiveSoon(f, needs, run)
+        defer { pullingNow[id]?.remove(g.name) }
+        do {
+            let changedNames: [String]
+            switch (g.deleted, g.kind) {
+            case (true, _): changedNames = try deleteItem(f, g)
+            case (false, .directory): changedNames = try makeDirectory(f, g)
+            case (false, .symlink): changedNames = try makeSymlink(f, g)
+            case (false, .file): changedNames = try await pullFile(f, g, from: p, localBlocks: run.localBlocks)
+            }
+            run.rescans += changedNames
+            if let rec = f.files[g.name] { run.done += 1; run.unsent.append(rec) }
+            if g.kind != .directory {
+                let action: SyncFolderDetail.Change.Action = g.deleted ? .deleted : ((before == nil || before!.deleted) ? .added : .modified)
+                detail.record(id, [SyncFolderDetail.Change(date: Date(), path: g.name, action: action, origin: .peer(from))])
+            }
+        } catch {
+            // 받는 사이 이 폴더를 그만뒀으면(이쪽이 끄거나 지움 · 저쪽이 그만둠) 실패가 아니라 멈춘 것
+            let stoppedHere = folders[id] !== f
+            if stoppedHere || connected[from]?.folders.contains(id) == false {
+                if !run.stop {
+                    log("\(f.config.name) / \(g.name) 받기 멈춤 — \(stoppedHere ? "이 Mac" : (connected[from]?.peer.name ?? "저쪽")) 에서 이 폴더 동기화를 그만둠")
+                }
+                run.stop = true
+                return
+            }
+            // 보내는 쪽에서 쓰는 중인 파일(빌드 기록 등): 저쪽이 다시 훑어 새 버전을 알리면 그때 다시 받는다.
+            // 일시적인 일이라 오류로 띄우지 않는다 (Syncthing 도 다음에 다시 시도)
+            if (error as? SyncError)?.message == SyncError.changedOnSender {
+                log("\(f.config.name) / \(g.name) 보내는 쪽에서 바뀌는 중 — 새 버전이 오면 다시 받음")
+            } else {
+                run.errors += 1
+                status[id]?.lastError = "\(g.name): \(error.localizedDescription)"
+                log("\(f.config.name) / \(g.name) 받기 실패: \(error.localizedDescription)")
+            }
+        }
+        status[id]?.needItems -= 1
+        if run.done % 200 == 0 { publish() }
+        if !run.unsent.isEmpty, run.unsent.count >= 500 || Date().timeIntervalSince(run.lastBroadcast) >= 1 {
+            if Date().timeIntervalSince(run.lastSave) >= 10 { f.save(); run.lastSave = Date() }
+            broadcast(id, run.unsent)
+            run.unsent = []
+            run.lastBroadcast = Date()
+        }
+    }
+
+    /// 상세 창 받기 줄은 0.5초에 한 번만 다시 만든다 (받을 것 전체를 훑으므로 파일마다 하면 수만 개일 때 엔진이 묶였다)
+    private func refreshReceiveSoon(_ f: SyncFolderIndex, _ needs: [(file: SyncFile, from: String)], _ run: PullRun) {
+        guard Date().timeIntervalSince(run.lastRows) >= 0.5 else { return }
+        run.lastRows = Date()
+        refreshReceive(f, needs)
     }
 
     private func diskName(_ f: SyncFolderIndex, _ name: String) -> String {
