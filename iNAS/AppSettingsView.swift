@@ -13,10 +13,13 @@ struct AppSettingsView: View {
                 GeneralSettingsPage().frame(width: Self.width, height: 260)
             }
             Tab("서버", systemImage: "externaldrive.connected.to.line.below", value: "server") {
-                ServerSettingsPage().frame(width: Self.width, height: 600)
+                ServerSettingsPage().frame(width: Self.width, height: 300)
             }
             Tab("동기화", systemImage: "arrow.triangle.2.circlepath", value: "sync") {
-                SyncSettingsPage().frame(width: Self.width, height: 680)
+                SyncSettingsPage().frame(width: Self.width, height: 640)
+            }
+            Tab("기록", systemImage: "list.bullet.rectangle", value: "logs") {
+                LogsSettingsPage().frame(width: Self.width, height: 520)
             }
         }
         .background(SettingsWindowStyler())
@@ -59,7 +62,7 @@ private struct UpdateSection: View {
     }
 }
 
-/// 설정 > 서버: 자동 연결 토글 셋과 상주 에이전트의 최근 기록
+/// 설정 > 서버: 자동 연결 토글 셋 (기록은 설정 > 기록)
 private struct ServerSettingsPage: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var store: ServerStore
@@ -101,50 +104,9 @@ private struct ServerSettingsPage: View {
             } footer: {
                 Text("시작 시: 로그인할 때 고른 공유를 연결합니다. 연결 해제 시: 잠자기에서 깨어날 때나 네트워크가 바뀔 때 빠진 공유를 다시 연결하고, 서버가 끊기면 돌아올 때까지 1분마다 다시 시도합니다. 직접 꺼낸 공유는 다음 깨어남까지 그대로 둡니다.")
             }
-
-            Section {
-                let events = agent.status?.events ?? []
-                if events.isEmpty {
-                    Text("아직 기록이 없습니다.").foregroundStyle(.secondary)
-                } else {
-                    ForEach(events.prefix(30)) { event in
-                        EventRow(event: event)
-                    }
-                }
-            } header: {
-                Text("최근 기록")
-            }
         }
         .formStyle(.grouped)
         .onAppear { agent.connect() }
-    }
-}
-
-/// 최근 기록 한 줄: 시각 · 점 · 내용
-private struct EventRow: View {
-    let event: AgentEvent
-
-    private var color: Color {
-        switch event.level {
-        case .ok: return .green
-        case .warn: return .orange
-        case .info: return .secondary
-        }
-    }
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(event.date.shortStamp)
-                .font(.caption)
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .frame(width: 96, alignment: .leading)
-            Circle().fill(color).frame(width: 7, height: 7)
-            Text(event.text)
-                .font(.callout)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
     }
 }
 

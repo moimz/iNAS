@@ -58,7 +58,7 @@ struct INASApp: App {
             }
         }
 
-        // iNAS 설정 (⌘,): 일반(업데이트) · 서버(자동 연결 · 최근 기록)
+        // iNAS 설정 (⌘,): 일반(업데이트) · 서버(자동 연결) · 동기화(기기) · 기록(서버 · 동기화)
         Settings {
             AppSettingsView()
                 .environmentObject(model)

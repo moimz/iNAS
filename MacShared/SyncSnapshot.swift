@@ -10,6 +10,11 @@ struct SyncSnapshot: Codable, Equatable {
         var blockedKey: String?
         /// 공개 키 아이디 (없으면 옛 빌드)
         var keyID: String?
+        /// 접속 가능 여부 (누구든 이 기기 지금 주소로 붙어 본 결과): true 확인됨 · false 막힘 · nil 확인 대기
+        var reachOK: Bool?
+        var reachText: String
+        /// 이 Mac 과 지금 암호화 연결이 있는지
+        var connected: Bool
         var id: String { device.id }
     }
 
@@ -30,6 +35,8 @@ struct SyncSnapshot: Codable, Equatable {
     var folderStatus: [String: SyncFolderStatus]
     var busy: Bool
     var log: [LogLine]
+    /// 이 Mac 의 키 아이디 (공개 키 SHA-256)
+    var keyID: String
 
     static func decode(_ data: Data) -> SyncSnapshot? {
         let d = JSONDecoder()
