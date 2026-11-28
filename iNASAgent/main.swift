@@ -125,12 +125,24 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             case .problem: inner = Self.symbol("exclamationmark.arrow.triangle.2.circlepath", .systemOrange)
             }
             guard let inner else { return nil }
-            let box = NSSize(width: 16, height: 16)
-            return NSImage(size: box, flipped: false) { r in
-                let s = inner.size
-                inner.draw(in: NSRect(x: (r.width - s.width) / 2, y: (r.height - s.height) / 2, width: s.width, height: s.height))
-                return true
-            }
+            return Self.boxed(inner)
+        }
+
+        /// 16×16 칸 가운데에 미리 그려 둔 비트맵 (그리기 핸들러로 된 이미지는 메뉴에서 안 그려져 점이 사라졌다, 빌드 102)
+        private static func boxed(_ inner: NSImage) -> NSImage? {
+            let pt: CGFloat = 16, scale: CGFloat = 2
+            guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(pt * scale), pixelsHigh: Int(pt * scale),
+                                             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                             colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+            rep.size = NSSize(width: pt, height: pt)
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+            let s = inner.size
+            inner.draw(in: NSRect(x: (pt - s.width) / 2, y: (pt - s.height) / 2, width: s.width, height: s.height))
+            NSGraphicsContext.restoreGraphicsState()
+            let image = NSImage(size: NSSize(width: pt, height: pt))
+            image.addRepresentation(rep)
+            return image
         }
 
         private static func dot(_ c: NSColor) -> NSImage? {
