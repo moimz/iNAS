@@ -128,11 +128,17 @@ struct FolderEditor: View {
                 ConflictSection(root: root, conflicts: conflicts)
             }
 
-            Section {
-                Button("폴더 삭제…", role: .destructive, action: onDelete)
-            }
         }
         .formStyle(.grouped)
+        // 서버 화면과 같은 아래 막대 (폴더는 고치면 바로 저장돼 저장 버튼은 없다)
+        .safeAreaInset(edge: .bottom) {
+            HStack {
+                Button("폴더 삭제…", role: .destructive, action: onDelete)
+                Spacer()
+            }
+            .padding(12)
+            .background(.bar)
+        }
         .onAppear {
             name = folders.folder(folderID)?.name ?? ""
             ignores = folders.folder(folderID)?.ignores ?? ""
