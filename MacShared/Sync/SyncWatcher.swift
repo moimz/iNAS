@@ -5,6 +5,8 @@ import Foundation
 final class SyncWatcher {
     private var stream: FSEventStreamRef?
     private let root: String
+    /// 받은 경로 · 실제 경로 앞부분 (SyncFolderIndex.pathPrefixes)
+    private let prefixes: [String]
     /// 지켜보는 폴더 (처음 받은 경로)
     let path: String
     private let onChange: ([String]) -> Void
@@ -12,6 +14,7 @@ final class SyncWatcher {
     init?(path: String, onChange: @escaping ([String]) -> Void) {
         self.path = path
         root = (path as NSString).standardizingPath
+        prefixes = SyncFolderIndex.pathPrefixes(path)
         self.onChange = onChange
         var ctx = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(self).toOpaque(), retain: nil, release: nil, copyDescription: nil)
         let cb: FSEventStreamCallback = { _, info, count, paths, _, _ in
@@ -36,13 +39,13 @@ final class SyncWatcher {
     }
 
     private func handle(_ paths: [String]) {
-        let prefix = root.hasSuffix("/") ? root : root + "/"
         var rel = Set<String>()
         for p in paths {
             let std = (p as NSString).standardizingPath
-            if std == root { rel = [""]; break }
-            guard std.hasPrefix(prefix) else { continue }
-            let r = String(std.dropFirst(prefix.count))
+            // 폴더가 심볼릭 링크면 FSEvents 는 링크를 푼 실제 경로로 알려 준다
+            if prefixes.contains(std + "/") || prefixes.contains(p + "/") { rel = [""]; break }
+            guard let prefix = prefixes.first(where: { p.hasPrefix($0) || std.hasPrefix($0) }) else { continue }
+            let r = String((p.hasPrefix(prefix) ? p : std).dropFirst(prefix.count))
             let base = (r as NSString).lastPathComponent
             if base.hasPrefix(SyncFolderIndex.tempPrefix) { continue }  // 받는 중인 임시 파일
             rel.insert(r)

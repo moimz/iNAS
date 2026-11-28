@@ -131,6 +131,23 @@ final class SyncFolderIndex {
         }
     }
 
+    /// 폴더 경로 앞부분들: 받은 그대로 · 정리한 것 · 심볼릭 링크를 다 푼 것 (끝에 "/")
+    /// resolvingSymlinksInPath · standardizingPath 는 /private/var 를 도로 /var 로 줄여서 실제 경로는 realpath 로
+    static func pathPrefixes(_ path: String) -> [String] {
+        let all = [path, (path as NSString).standardizingPath, realPath(path)]
+        var out: [String] = []
+        for p in all {
+            let s = p.hasSuffix("/") ? p : p + "/"
+            if !out.contains(s) { out.append(s) }
+        }
+        return out
+    }
+
+    /// 심볼릭 링크를 다 푼 실제 경로 (없으면 받은 그대로)
+    static func realPath(_ path: String) -> String {
+        realpath(path, nil).map { p in defer { free(p) }; return String(cString: p) } ?? path
+    }
+
     /// 마지막 훑기에서 새로 생긴(전에 없던) 이름 — 상세 창 "추가" / "고침" 구분용
     private(set) var lastScanNew = Set<String>()
 
@@ -162,14 +179,19 @@ final class SyncFolderIndex {
             return s.kind == .directory
         }
 
+        let prefixes = Self.pathPrefixes(root.path)
+        let realRoot = Self.realPath(root.path)
         func walk(_ rel: String) {
-            let base = rel.isEmpty ? root : root.appendingPathComponent(rel)
+            // 폴더 자체가 심볼릭 링크면 열거자가 안으로 안 들어가서 실제 경로에서 시작한다
+            let top = URL(fileURLWithPath: realRoot, isDirectory: true)
+            let base = rel.isEmpty ? top : top.appendingPathComponent(rel)
             guard let e = FileManager.default.enumerator(at: base, includingPropertiesForKeys: nil, options: [],
                                                           errorHandler: { _, _ in true }) else { return }
-            let rootPath = root.path.hasSuffix("/") ? root.path : root.path + "/"
+            // 열거자는 심볼릭 링크를 푼 경로(/var → /private/var)를 돌려줄 수 있어 앞부분을 다 본다
+            let rootPaths = prefixes
             for case let url as URL in e {
                 let full = url.path
-                guard full.hasPrefix(rootPath) else { continue }
+                guard let rootPath = rootPaths.first(where: { full.hasPrefix($0) }) else { continue }
                 let r = String(full.dropFirst(rootPath.count))
                 // skipDescendants 는 폴더에서만 부른다: 파일에서 부르면 그 폴더의 나머지 형제까지 건너뛴다
                 let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]))

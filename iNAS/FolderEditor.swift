@@ -2,6 +2,8 @@ import SwiftUI
 
 /// 동기화 폴더 설정: 위는 모든 Mac 공통(iCloud), 아래는 이 Mac 만
 struct FolderEditor: View {
+    static let rescanChoices: [(Int, String)] = [(0, "끄기"), (30, "30분마다"), (60, "1시간마다"), (120, "2시간마다"),
+                                                 (360, "6시간마다"), (720, "12시간마다"), (1440, "24시간마다")]
     @EnvironmentObject private var folders: SyncFolderStore
     @EnvironmentObject private var agent: AgentClient
     let folderID: String
@@ -99,6 +101,14 @@ struct FolderEditor: View {
                         }
                     }
                     if setting.path != nil {
+                        // 변경 신호(FSEvents)로 놓친 것까지: 이 간격마다 폴더 전체를 다시 훑는다 (Syncthing 기본 1시간)
+                        Picker("재탐색", selection: Binding(
+                            get: { setting.rescanMinutes ?? 60 },
+                            set: { folders.setRescanMinutes(folderID, $0) }
+                        )) {
+                            ForEach(Self.rescanChoices, id: \.0) { Text($0.1).tag($0.0) }
+                        }
+                        .help("파일 변경 신호로 놓친 것까지 찾도록 이 간격마다 폴더 전체를 다시 훑습니다")
                         let st = myState
                         FolderStatusLine(folderID: folderID, kind: st.kind, text: st.text,
                                          count: status.map { FolderStatusLine.count(files: $0.localFiles, bytes: $0.localBytes) })
